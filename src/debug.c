@@ -2,7 +2,6 @@
 
 #include "debug.h"
 #include "value.h"
-#include "vm.h"
 
 void disassembleChunk(Chunk *chunk, const char *name) {
     printf("== %s ==\n", name);
@@ -12,32 +11,37 @@ void disassembleChunk(Chunk *chunk, const char *name) {
     }
 }
 
-static int simpleInstruction(const char *name, int offset) {
+inline static int simpleInstruction(const char *name, int offset) {
     printf("%s\n", name);
     return offset + 1;
 }
 
+inline static int constantInstruction(Chunk *chunk, int offset) {
+    uint8_t operand = chunk->code[offset + 1];
+    printf("%-16s %4d '", "OP_CONSTANT", operand);
+    printValue(chunk->constants.values[operand]);
+    printf("'\n");
+    return offset + 2;
+}
+
+inline static int constantInstructionLong(Chunk *chunk, int offset) {
+    uint32_t operand = chunk->code[offset + 1] |
+                       (chunk->code[offset + 2] << 8) |
+                       (chunk->code[offset + 3] << 16);
+    printf("%-16s %4d '", "OP_CONSTANT_LONG", operand);
+    printValue(chunk->constants.values[operand]);
+    printf("'\n");
+    return offset + 4;
+}
+
+inline static int instructionWithOperand(const char *name, Chunk *chunk, int offset) {
+    uint16_t operand = chunk->code[offset + 1] |
+                       (chunk->code[offset + 2] << 8);
+    printf("%-16s %4d\n", name, operand);
+    return offset + 3;
+}
+
 int disassembleInstruction(Chunk *chunk, int offset) {
-#define INSTRUCTION_WITH_OPERAND(instruction, operandSource) \
-    do {                                                     \
-        uint8_t operand = chunk->code[offset + 1];           \
-        printf("%-16s %4d '", instruction, operand);         \
-        printValue(operandSource[operand]);                  \
-        printf("'\n");                                       \
-        return offset + 2;                                   \
-    } while(false)
-
-#define INSTRUCTION_WITH_LONG_OPERAND(instruction, operandSource) \
-    do {                                                          \
-        uint32_t operand = chunk->code[offset + 1] |              \
-            (chunk->code[offset + 2] << 8) |                      \
-            (chunk->code[offset + 3] << 16);                      \
-        printf("%-16s %4d '", instruction, operand);              \
-        printValue(operandSource[operand]);                       \
-        printf("'\n");                                            \
-        return offset + 4;                                        \
-    } while(false)
-
     printf("%04d ", offset);
 
     if (offset > 0 && getLine(&chunk->lines, offset) == getLine(&chunk->lines, offset - 1)) {
@@ -50,9 +54,9 @@ int disassembleInstruction(Chunk *chunk, int offset) {
     uint8_t instruction = chunk->code[offset];
     switch (instruction) {
         case OP_CONSTANT:
-            INSTRUCTION_WITH_OPERAND("OP_CONSTANT", chunk->constants.values);
+            return constantInstruction(chunk, offset);
         case OP_CONSTANT_LONG:
-            INSTRUCTION_WITH_LONG_OPERAND("OP_CONSTANT_LONG", chunk->constants.values);
+            return constantInstructionLong(chunk, offset);
         case OP_NIL:
             return simpleInstruction("OP_NIL", offset);
         case OP_TRUE:
@@ -61,18 +65,18 @@ int disassembleInstruction(Chunk *chunk, int offset) {
             return simpleInstruction("OP_FALSE", offset);
         case OP_POP:
             return simpleInstruction("OP_POP", offset);
+        case OP_POPN:
+            return instructionWithOperand("OP_POPN", chunk, offset);
         case OP_GET_GLOBAL:
-            INSTRUCTION_WITH_OPERAND("OP_GET_GLOBAL", vm.globals.values);
-        case OP_GET_GLOBAL_LONG:
-            INSTRUCTION_WITH_LONG_OPERAND("OP_GET_GLOBAL_LONG", vm.globals.values);
+            return instructionWithOperand("OP_GET_GLOBAL", chunk, offset);
         case OP_SET_GLOBAL:
-            INSTRUCTION_WITH_OPERAND("OP_SET_GLOBAL", vm.globals.values);
-        case OP_SET_GLOBAL_LONG:
-            INSTRUCTION_WITH_LONG_OPERAND("OP_SET_GLOBAL_LONG", vm.globals.values);
+            return instructionWithOperand("OP_SET_GLOBAL", chunk, offset);
         case OP_DEFINE_GLOBAL:
-            INSTRUCTION_WITH_OPERAND("OP_DEFINE_GLOBAL", vm.globals.values);
-        case OP_DEFINE_GLOBAL_LONG:
-            INSTRUCTION_WITH_LONG_OPERAND("OP_DEFINE_GLOBAL_LONG", vm.globals.values);
+            return instructionWithOperand("OP_DEFINE_GLOBAL", chunk, offset);
+        case OP_GET_LOCAL:
+            return instructionWithOperand("OP_GET_LOCAL", chunk, offset);
+        case OP_SET_LOCAL:
+            return instructionWithOperand("OP_SET_LOCAL", chunk, offset);
         case OP_EQUAL:
             return simpleInstruction("OP_EQUAL", offset);
         case OP_GREATER:
@@ -99,7 +103,4 @@ int disassembleInstruction(Chunk *chunk, int offset) {
             printf("Unknown opcode %d\n", instruction);
             return offset + 1;
     }
-
-#undef INSTRUCTION_WITH_OPERAND
-#undef INSTRUCTION_WITH_LONG_OPERAND
 }

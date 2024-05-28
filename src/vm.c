@@ -1,12 +1,14 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
+#include "buffer.h"
 #include "common.h"
 #include "debug.h"
 #include "vm.h"
 #include "compiler.h"
 #include "object.h"
 
+Buffer buffer;
 VM vm;
 
 static void resetStack() {
@@ -24,7 +26,7 @@ static void runtimeError(const char *format, ...) {
 
     size_t instruction = vm.ip - vm.chunk->code - 1;
     uint32_t line = getLine(&vm.chunk->lines, instruction);
-    fprintf(stderr, "[line %d] in script\n", line);
+    fprintf(stderr, "[line %u] in script\n", line);
     resetStack();
 }
 
@@ -32,14 +34,13 @@ void initVM() {
     resetStack();
     vm.objects = NULL;
     initTable(&vm.strings, VAL_OBJ);
-    initValueArray(&vm.globals);
+    initBuffer(&buffer);
 }
 
 void freeVM() {
-    freeTable(&parser.variableIdentifiers);
     FREE_ARRAY(Value, vm.stack, vm.stackCapacity);
     freeTable(&vm.strings);
-    freeValueArray(&vm.globals);
+    freeBuffer(&buffer);
     freeObjects();
 }
 
@@ -58,8 +59,8 @@ void push(Value value) {
     vm.stackNextTop++;
 }
 
-Value pop() {
-    vm.stackNextTop--;
+Value pop(uint16_t count) {
+    vm.stackNextTop -= count;
     return vm.stack[vm.stackNextTop];
 }
 
@@ -72,8 +73,8 @@ static bool isFalsey(Value value) {
 }
 
 static void concatenate() {
-    ObjString *objB = (ObjString *) AS_OBJ(pop());
-    ObjString *objA = (ObjString *) AS_OBJ(pop());
+    ObjString *objB = (ObjString *) AS_OBJ(pop(1));
+    ObjString *objA = (ObjString *) AS_OBJ(pop(1));
 
     int length = objA->length + objB->length;
     ObjString *result = allocateString(length, false);
@@ -95,17 +96,26 @@ static void concatenate() {
 
 static InterpretResult run() {
 #define READ_BYTE() (*vm.ip++)
-#define READ_LONG_BYTE() (READ_BYTE() | (READ_BYTE() << 8) | (READ_BYTE() << 16))
+#define READ_LONG_BYTE() ({ \
+    uint8_t byte1 = READ_BYTE(); \
+    uint8_t byte2 = READ_BYTE(); \
+    (byte1 | (byte2 << 8)); \
+})
 #define READ_CONSTANT() (vm.chunk->constants.values[READ_BYTE()])
-#define READ_CONSTANT_LONG() (vm.chunk->constants.values[READ_LONG_BYTE()])
+#define READ_CONSTANT_LONG() ({ \
+    uint8_t byte1 = READ_BYTE();\
+    uint8_t byte2 = READ_BYTE();\
+    uint8_t byte3 = READ_BYTE();\
+    (vm.chunk->constants.values[(byte1 | (byte2 << 8) | (byte3 << 16))]); \
+})
 #define BINARY_OP(valueType, op) \
     do {                  \
         if (!IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1))) { \
             runtimeError("Operands must be numbers.");    \
             return INTERPRET_RUNTIME_ERROR;               \
         }                                                 \
-        double b = AS_NUMBER(pop());                      \
-        double a = AS_NUMBER(pop());                      \
+        double b = AS_NUMBER(pop(1));                      \
+        double a = AS_NUMBER(pop(1));                      \
         push(valueType(a op b));                          \
     } while(false)
 
@@ -138,14 +148,16 @@ static InterpretResult run() {
                 push(BOOL_VAL(false));
                 break;
             case OP_POP:
-                pop();
+                pop(1);
                 break;
-            case OP_GET_GLOBAL:
-            case OP_GET_GLOBAL_LONG: {
-                uint32_t variableIndex = instruction == OP_GET_GLOBAL ? READ_BYTE() : READ_LONG_BYTE();
-                Value* globals = vm.globals.values;
+            case OP_POPN:
+                pop(READ_LONG_BYTE());
+                break;
+            case OP_GET_GLOBAL: {
+                uint16_t variableIndex = READ_LONG_BYTE();
+                Value *globals = buffer.globalVars.values;
                 if (globals[variableIndex].type == VAL_UNDEFINED) {
-                    ObjString* varName = AS_STRING(globals[variableIndex - 1]);
+                    ObjString *varName = AS_STRING(globals[variableIndex - 1]);
                     runtimeError("Undefined variable '%.*s'.", varName->length, AS_CSTRING(varName));
                     return INTERPRET_RUNTIME_ERROR;
                 }
@@ -154,13 +166,12 @@ static InterpretResult run() {
                 push(value);
                 break;
             }
-            case OP_SET_GLOBAL:
-            case OP_SET_GLOBAL_LONG: {
-                uint32_t variableIndex = instruction == OP_SET_GLOBAL ? READ_BYTE() : READ_LONG_BYTE();
-                Value* globals = vm.globals.values;
+            case OP_SET_GLOBAL: {
+                uint16_t variableIndex = READ_LONG_BYTE();
+                Value *globals = buffer.globalVars.values;
 
                 if (globals[variableIndex].type == VAL_UNDEFINED) {
-                    ObjString* varName = AS_STRING(globals[variableIndex - 1]);
+                    ObjString *varName = AS_STRING(globals[variableIndex - 1]);
                     runtimeError("Undefined variable '%.*s'.", varName->length, AS_CSTRING(varName));
                     return INTERPRET_RUNTIME_ERROR;
                 }
@@ -168,16 +179,25 @@ static InterpretResult run() {
                 globals[variableIndex] = peek(0);
                 break;
             }
-            case OP_DEFINE_GLOBAL:
-            case OP_DEFINE_GLOBAL_LONG: {
-                uint32_t variableIndex = instruction == OP_DEFINE_GLOBAL ? READ_BYTE() : READ_LONG_BYTE();
-                vm.globals.values[variableIndex] = peek(0);
-                pop();
+            case OP_DEFINE_GLOBAL: {
+                uint16_t variableIndex = READ_LONG_BYTE();
+                buffer.globalVars.values[variableIndex] = peek(0);
+                pop(1);
+                break;
+            }
+            case OP_GET_LOCAL: {
+                uint16_t slot = READ_LONG_BYTE();
+                push(vm.stack[slot]);
+                break;
+            }
+            case OP_SET_LOCAL: {
+                uint16_t slot = READ_LONG_BYTE();
+                vm.stack[slot] = peek(0);
                 break;
             }
             case OP_EQUAL: {
-                Value b = pop();
-                Value a = pop();
+                Value b = pop(1);
+                Value a = pop(1);
                 push(BOOL_VAL(valuesEqual(a, b)));
                 break;
             }
@@ -191,8 +211,8 @@ static InterpretResult run() {
                 if (IS_STRING(peek(0)) && IS_STRING(peek(1))) {
                     concatenate();
                 } else if (IS_NUMBER(peek(0)) && IS_NUMBER(peek(1))) {
-                    double b = AS_NUMBER(pop());
-                    double a = AS_NUMBER(pop());
+                    double b = AS_NUMBER(pop(1));
+                    double a = AS_NUMBER(pop(1));
                     push(NUMBER_VAL(a + b));
                 } else {
                     runtimeError("Operands must be two numbers or two strings.");
@@ -209,17 +229,17 @@ static InterpretResult run() {
                 BINARY_OP(NUMBER_VAL, /);
                 break;
             case OP_NOT:
-                push(BOOL_VAL(isFalsey(pop())));
+                push(BOOL_VAL(isFalsey(pop(1))));
                 break;
             case OP_NEGATE:
                 if (!IS_NUMBER(peek(0))) {
                     runtimeError("Operand must be a number.");
                     return INTERPRET_RUNTIME_ERROR;
                 }
-                push(NUMBER_VAL(-AS_NUMBER(pop())));
+                push(NUMBER_VAL(-AS_NUMBER(pop(1))));
                 break;
             case OP_PRINT:
-                printValue(pop());
+                printValue(pop(1));
                 printf("\n");
                 break;
             case OP_RETURN: {

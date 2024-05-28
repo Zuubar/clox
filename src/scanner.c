@@ -80,13 +80,15 @@ static bool skipWhitespace() {
                 advance();
                 break;
             case '/':
-                if (peekNext() == '/') {
+                advance();
+                if (peek() == '/') {
                     while (peek() != '\n' && !isAtEnd()) advance();
-                } else if (peekNext() == '*') {
+                    break;
+                } else if (peek() == '*') {
                     advance();
                     int indents = 1;
 
-                    while (!isAtEnd()) {
+                    while (indents > 0 && !isAtEnd()) {
                         switch (advance()) {
                             case '\n':
                                 scanner.line++;
@@ -103,10 +105,10 @@ static bool skipWhitespace() {
                                 break;
                         }
                     }
-
                     if (indents > 0) {
                         return false;
                     }
+                    break;
 
                 } else {
                     return true;
@@ -128,7 +130,16 @@ static TokenType checkKeyword(int start, int length, const char* rest, TokenType
 static TokenType identifierType() {
     switch (scanner.start[0]) {
         case 'a': return checkKeyword(1, 2, "nd", TOKEN_AND);
-        case 'c': return checkKeyword(1, 4, "lass", TOKEN_CLASS);
+        case 'c': {
+            if (scanner.current - scanner.start > 1) {
+                switch (scanner.start[1]) {
+                    case 'o':
+                        return checkKeyword(2, 3, "nst", TOKEN_CONST);
+                    case 'l':
+                        return checkKeyword(2, 4, "lass", TOKEN_CLASS);
+                }
+            }
+        }
         case 'e': return checkKeyword(1, 3, "lse", TOKEN_ELSE);
         case 'f':
             if (scanner.current - scanner.start > 1) {
