@@ -15,7 +15,6 @@ typedef struct {
     size_t stackCapacity;
     size_t stackNextTop;
     Table strings;
-    ValueArray globals;
     Obj* objects;
 } VM;
 
@@ -35,6 +34,6 @@ InterpretResult interpret(const char* source);
 
 void push(Value value);
 
-Value pop();
+Value pop(uint16_t count);
 
 #endif //CLOX_VM_H
