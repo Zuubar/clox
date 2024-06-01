@@ -136,7 +136,7 @@ static TokenType identifierType() {
                     case 'o':
                         return checkKeyword(2, 3, "nst", TOKEN_CONST);
                     case 'l':
-                        return checkKeyword(2, 4, "lass", TOKEN_CLASS);
+                        return checkKeyword(2, 3, "ass", TOKEN_CLASS);
                 }
             }
         }

@@ -96,7 +96,7 @@ static void concatenate() {
 
 static InterpretResult run() {
 #define READ_BYTE() (*vm.ip++)
-#define READ_LONG_BYTE() ({ \
+#define READ_SHORT() ({ \
     uint8_t byte1 = READ_BYTE(); \
     uint8_t byte2 = READ_BYTE(); \
     (byte1 | (byte2 << 8)); \
@@ -151,10 +151,10 @@ static InterpretResult run() {
                 pop(1);
                 break;
             case OP_POPN:
-                pop(READ_LONG_BYTE());
+                pop(READ_SHORT());
                 break;
             case OP_GET_GLOBAL: {
-                uint16_t variableIndex = READ_LONG_BYTE();
+                uint16_t variableIndex = READ_SHORT();
                 Value *globals = buffer.globalVars.values;
                 if (globals[variableIndex].type == VAL_UNDEFINED) {
                     ObjString *varName = AS_STRING(globals[variableIndex - 1]);
@@ -167,7 +167,7 @@ static InterpretResult run() {
                 break;
             }
             case OP_SET_GLOBAL: {
-                uint16_t variableIndex = READ_LONG_BYTE();
+                uint16_t variableIndex = READ_SHORT();
                 Value *globals = buffer.globalVars.values;
 
                 if (globals[variableIndex].type == VAL_UNDEFINED) {
@@ -180,18 +180,18 @@ static InterpretResult run() {
                 break;
             }
             case OP_DEFINE_GLOBAL: {
-                uint16_t variableIndex = READ_LONG_BYTE();
+                uint16_t variableIndex = READ_SHORT();
                 buffer.globalVars.values[variableIndex] = peek(0);
                 pop(1);
                 break;
             }
             case OP_GET_LOCAL: {
-                uint16_t slot = READ_LONG_BYTE();
+                uint16_t slot = READ_SHORT();
                 push(vm.stack[slot]);
                 break;
             }
             case OP_SET_LOCAL: {
-                uint16_t slot = READ_LONG_BYTE();
+                uint16_t slot = READ_SHORT();
                 vm.stack[slot] = peek(0);
                 break;
             }
@@ -242,6 +242,16 @@ static InterpretResult run() {
                 printValue(pop(1));
                 printf("\n");
                 break;
+            case OP_JUMP: {
+                uint16_t offset = READ_SHORT();
+                vm.ip += offset;
+                break;
+            }
+            case OP_JUMP_IF_FALSE: {
+                uint16_t offset = READ_SHORT();
+                vm.ip += isFalsey(peek(0)) * offset;
+                break;
+            }
             case OP_RETURN: {
                 // Exit interpreter.
                 return INTERPRET_OK;
@@ -250,7 +260,7 @@ static InterpretResult run() {
     }
 
 #undef READ_BYTE
-#undef READ_LONG_BYTE
+#undef READ_SHORT
 #undef READ_CONSTANT
 #undef READ_CONSTANT_LONG
 #undef BINARY_OP
