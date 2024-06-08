@@ -47,6 +47,13 @@ typedef struct {
     int localCount;
     int localCapacity;
     int scopeDepth;
+    int loopStart;
+    int loopScopeDepth;
+    struct {
+        int stack[UINT8_MAX];
+        int top;
+        int scopeCount;
+    } Break;
 } Compiler;
 
 Parser parser;
@@ -169,7 +176,15 @@ inline static void emitShort(uint8_t instruction, uint32_t operand) {
     }
     emitByte(instruction);
     emitByte((uint8_t) operand & 0xff);
-    emitByte((uint8_t) ((operand >> 8) & 0xff));
+    emitByte((uint8_t)((operand >> 8) & 0xff));
+}
+
+static void emitLoop(int loopStart) {
+    int offset = currentChunk()->count - loopStart + 3;
+    if (offset > UINT16_MAX) {
+        error("Loop body too large.");
+    }
+    emitShort(OP_LOOP, offset);
 }
 
 static void emitReturn() {
@@ -191,6 +206,12 @@ static void patchJump(int offset) {
     currentChunk()->code[offset + 1] = (jump >> 8) & 0xff;
 }
 
+static void patchBreak() {
+    for (int i = 0; i < current->Break.scopeCount; i++) {
+        patchJump(current->Break.stack[--current->Break.top]);
+    }
+}
+
 static uint32_t makeConstant(Value value) {
     ValueArray *globalValues = &buffer.globalVars;
     if (globalValues->count + 1 > UINT16_MAX) {
@@ -207,6 +228,10 @@ static void initCompiler(Compiler *compiler) {
     compiler->localCount = 0;
     compiler->scopeDepth = 0;
     compiler->localCapacity = LOCALS_MIN;
+    compiler->loopStart = -1;
+    compiler->loopScopeDepth = -1;
+    compiler->Break.top = 0;
+    compiler->Break.scopeCount = 0;
     current = compiler;
 }
 
@@ -550,6 +575,118 @@ static void printStatement() {
     emitByte(OP_PRINT);
 }
 
+static void whileStatement() {
+    int previousLoopStart = current->loopStart;
+    int previousLoopScopeDepth = current->loopScopeDepth;
+    current->loopStart = currentChunk()->count;
+    current->loopScopeDepth = current->scopeDepth;
+
+    consume(TOKEN_LEFT_PAREN, "Expected '(' after 'while'.");
+    expression();
+    consume(TOKEN_RIGHT_PAREN, "Expected ')' after condition.");
+
+    int exitJump = emitJump(OP_JUMP_IF_FALSE);
+    emitByte(OP_POP);
+    int previousScopeCount = current->Break.scopeCount;
+    current->Break.scopeCount = 0;
+    statement();
+    emitLoop(current->loopStart);
+
+    patchJump(exitJump);
+    emitByte(OP_POP);
+    patchBreak();
+    current->loopStart = previousLoopStart;
+    current->loopScopeDepth = previousLoopScopeDepth;
+    current->Break.scopeCount = previousScopeCount;
+}
+
+static void forStatement() {
+    beginScope();
+    consume(TOKEN_LEFT_PAREN, "Expected '(' after 'for'.");
+
+    // Initializer
+    if (match(TOKEN_SEMICOLON)) {
+        // Do nothing.
+    } else if (match(TOKEN_VAR)) {
+        varDeclaration(false);
+    } else {
+        expressionStatement();
+    }
+
+    // Condition clause
+    int previousLoopStart = current->loopStart;
+    int previousLoopScopeDepth = current->loopScopeDepth;
+    current->loopStart = currentChunk()->count;
+    current->loopScopeDepth = current->scopeDepth;
+
+    int exitJump = -1;
+    if (!match(TOKEN_SEMICOLON)) {
+        expression();
+        consume(TOKEN_SEMICOLON, "Expected ';' after loop condition.");
+
+        exitJump = emitJump(OP_JUMP_IF_FALSE);
+        emitByte(OP_POP);
+    }
+
+    // Increment expression
+    if (!match(TOKEN_RIGHT_PAREN)) {
+        int bodyJump = emitJump(OP_JUMP);
+        int incrementStart = currentChunk()->count;
+        expression();
+        emitByte(OP_POP);
+        consume(TOKEN_RIGHT_PAREN, "Expected ')' after for clauses.");
+
+        emitLoop(current->loopStart);
+        current->loopStart = incrementStart;
+        patchJump(bodyJump);
+    }
+
+    int previousScopeCount = current->Break.scopeCount;
+    current->Break.scopeCount = 0;
+    statement();
+    emitLoop(current->loopStart);
+
+    if (exitJump != -1) {
+        patchJump(exitJump);
+        emitByte(OP_POP);
+    }
+
+    patchBreak();
+    endScope();
+    current->loopStart = previousLoopStart;
+    current->loopScopeDepth = previousLoopScopeDepth;
+    current->Break.scopeCount = previousScopeCount;
+}
+
+static void breakStatement() {
+    consume(TOKEN_SEMICOLON, "Expected ';' after 'break'.");
+    if (current->loopStart == -1) {
+        error("Unexpected 'break' outside of loop.");
+    }
+
+    if (current->Break.top + 1 > UINT8_MAX) {
+        error("Too many 'break(s)' in a scope.");
+    }
+    current->Break.stack[current->Break.top++] = emitJump(OP_JUMP);
+    current->Break.scopeCount++;
+}
+
+static void continueStatement() {
+    consume(TOKEN_SEMICOLON, "Expected ';' after 'continue'.");
+    if (current->loopStart == -1) {
+        error("Unexpected 'continue' outside of loop.");
+    }
+    uint16_t popCount = 0;
+    for (int i = current->localCount - 1; i >= 0 && current->locals[i].depth > current->loopScopeDepth; i--) {
+        popCount++;
+    }
+
+    if (popCount > 0) {
+        emitShort(OP_POPN, popCount);
+    }
+    emitLoop(current->loopStart);
+}
+
 static void declaration() {
     if (match(TOKEN_VAR) || match(TOKEN_CONST)) {
         varDeclaration(parser.previous.type == TOKEN_CONST);
@@ -567,6 +704,14 @@ static void statement() {
         printStatement();
     } else if (match(TOKEN_IF)) {
         ifStatement();
+    } else if (match(TOKEN_WHILE)) {
+        whileStatement();
+    } else if (match(TOKEN_FOR)) {
+        forStatement();
+    } else if (match(TOKEN_BREAK)) {
+        breakStatement();
+    } else if (match(TOKEN_CONTINUE)) {
+        continueStatement();
     } else if (match(TOKEN_LEFT_BRACE)) {
         beginScope();
         block();

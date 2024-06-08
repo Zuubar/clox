@@ -27,7 +27,7 @@ static void runtimeError(const char *format, ...) {
     size_t instruction = vm.ip - vm.chunk->code - 1;
     uint32_t line = getLine(&vm.chunk->lines, instruction);
     fprintf(stderr, "[line %u] in script\n", line);
-    resetStack();
+    vm.stackNextTop = 0;
 }
 
 void initVM() {
@@ -250,6 +250,11 @@ static InterpretResult run() {
             case OP_JUMP_IF_FALSE: {
                 uint16_t offset = READ_SHORT();
                 vm.ip += isFalsey(peek(0)) * offset;
+                break;
+            }
+            case OP_LOOP: {
+                uint16_t offset = READ_SHORT();
+                vm.ip -= offset;
                 break;
             }
             case OP_RETURN: {
