@@ -34,10 +34,18 @@ inline static int constantInstructionLong(Chunk *chunk, int offset) {
     return offset + 4;
 }
 
-inline static int instructionWithOperand(const char *name, Chunk *chunk, int offset) {
+inline static int shortInstruction(const char *name, Chunk *chunk, int offset) {
     uint16_t operand = chunk->code[offset + 1] |
                        (chunk->code[offset + 2] << 8);
     printf("%-16s %4d\n", name, operand);
+    return offset + 3;
+}
+
+inline static int jumpInstruction(const char *name, int sign, Chunk *chunk, int offset) {
+    uint16_t jump = chunk->code[offset + 1] |
+                    (chunk->code[offset + 2] << 8);
+    printf("%-16s %4d -> %d\n", name, offset,
+           offset + 3 + sign * jump);
     return offset + 3;
 }
 
@@ -63,20 +71,22 @@ int disassembleInstruction(Chunk *chunk, int offset) {
             return simpleInstruction("OP_TRUE", offset);
         case OP_FALSE:
             return simpleInstruction("OP_FALSE", offset);
+        case OP_DUPLICATE:
+            return simpleInstruction("OP_DUPLICATE", offset);
         case OP_POP:
             return simpleInstruction("OP_POP", offset);
         case OP_POPN:
-            return instructionWithOperand("OP_POPN", chunk, offset);
+            return shortInstruction("OP_POPN", chunk, offset);
         case OP_GET_GLOBAL:
-            return instructionWithOperand("OP_GET_GLOBAL", chunk, offset);
+            return shortInstruction("OP_GET_GLOBAL", chunk, offset);
         case OP_SET_GLOBAL:
-            return instructionWithOperand("OP_SET_GLOBAL", chunk, offset);
+            return shortInstruction("OP_SET_GLOBAL", chunk, offset);
         case OP_DEFINE_GLOBAL:
-            return instructionWithOperand("OP_DEFINE_GLOBAL", chunk, offset);
+            return shortInstruction("OP_DEFINE_GLOBAL", chunk, offset);
         case OP_GET_LOCAL:
-            return instructionWithOperand("OP_GET_LOCAL", chunk, offset);
+            return shortInstruction("OP_GET_LOCAL", chunk, offset);
         case OP_SET_LOCAL:
-            return instructionWithOperand("OP_SET_LOCAL", chunk, offset);
+            return shortInstruction("OP_SET_LOCAL", chunk, offset);
         case OP_EQUAL:
             return simpleInstruction("OP_EQUAL", offset);
         case OP_GREATER:
@@ -97,10 +107,16 @@ int disassembleInstruction(Chunk *chunk, int offset) {
             return simpleInstruction("OP_NOT", offset);
         case OP_PRINT:
             return simpleInstruction("OP_PRINT", offset);
+        case OP_JUMP:
+            return jumpInstruction("OP_JUMP", 1, chunk, offset);
+        case OP_JUMP_IF_FALSE:
+            return jumpInstruction("OP_JUMP_IF_FALSE", 1, chunk, offset);
+        case OP_LOOP:
+            return jumpInstruction("OP_LOOP", -1, chunk, offset);
         case OP_RETURN:
             return simpleInstruction("OP_RETURN", offset);
         default:
             printf("Unknown opcode %d\n", instruction);
-            return offset + 1;
+            exit(1);
     }
 }

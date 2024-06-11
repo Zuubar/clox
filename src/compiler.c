@@ -47,11 +47,31 @@ typedef struct {
     int localCount;
     int localCapacity;
     int scopeDepth;
+    int loopStart;
+    int switchCaseDepth;
+    int loopScopeDepth;
+    struct {
+        int stack[UINT8_MAX];
+        int top;
+        int count;
+    } LoopBreak;
+    struct {
+        int stack[UINT8_MAX];
+        int top;
+        int count;
+    } SwitchBreak;
 } Compiler;
 
 Parser parser;
 Compiler *current = NULL;
 Chunk *compilingChunk;
+
+#define PATCH_BREAK(breakType) \
+    do {                       \
+        for (int i = 0; i < (breakType).count; i++) { \
+            patchJump((breakType).stack[--(breakType).top]); \
+        }                      \
+    } while(false)             \
 
 static void expression();
 
@@ -155,14 +175,29 @@ static void emitBytes(uint8_t byte1, uint8_t byte2) {
     emitByte(byte2);
 }
 
-inline static void emitInstructionWithOperand(uint8_t instruction, uint32_t operand) {
+static int emitJump(uint8_t instruction) {
+    emitByte(instruction);
+    emitByte(0xff);
+    emitByte(0xff);
+    return currentChunk()->count - 2;
+}
+
+inline static void emitShort(uint8_t instruction, uint32_t operand) {
     if (operand > UINT16_MAX) {
         error("Unsupported number of resources for this operation.");
         return;
     }
     emitByte(instruction);
     emitByte((uint8_t) operand & 0xff);
-    emitByte((uint8_t) ((operand >> 8) & 0xff));
+    emitByte((uint8_t)((operand >> 8) & 0xff));
+}
+
+static void emitLoop(int loopStart) {
+    int offset = currentChunk()->count - loopStart + 3;
+    if (offset > UINT16_MAX) {
+        error("Loop body too large.");
+    }
+    emitShort(OP_LOOP, offset);
 }
 
 static void emitReturn() {
@@ -171,6 +206,17 @@ static void emitReturn() {
 
 static void emitConstant(Value value) {
     writeConstant(currentChunk(), value, parser.previous.line);
+}
+
+static void patchJump(int offset) {
+    int jump = currentChunk()->count - offset - 2;
+
+    if (jump > UINT16_MAX) {
+        error("Too much code to jump over.");
+    }
+
+    currentChunk()->code[offset] = jump & 0xff;
+    currentChunk()->code[offset + 1] = (jump >> 8) & 0xff;
 }
 
 static uint32_t makeConstant(Value value) {
@@ -189,6 +235,13 @@ static void initCompiler(Compiler *compiler) {
     compiler->localCount = 0;
     compiler->scopeDepth = 0;
     compiler->localCapacity = LOCALS_MIN;
+    compiler->loopStart = -1;
+    compiler->loopScopeDepth = -1;
+    compiler->switchCaseDepth = 0;
+    compiler->LoopBreak.top = 0;
+    compiler->LoopBreak.count = 0;
+    compiler->SwitchBreak.top = 0;
+    compiler->SwitchBreak.count = 0;
     current = compiler;
 }
 
@@ -217,7 +270,7 @@ static void endScope() {
     if (popCount == 0) {
         return;
     }
-    emitInstructionWithOperand(OP_POPN, popCount);
+    emitShort(OP_POPN, popCount);
 }
 
 static uint32_t identifierConstant(Token *name) {
@@ -316,7 +369,7 @@ static void defineVariable(uint32_t global, Token name, bool isConst) {
         return;
     }
 
-    emitInstructionWithOperand(OP_DEFINE_GLOBAL, global);
+    emitShort(OP_DEFINE_GLOBAL, global);
 }
 
 static void namedVariable(Token name, bool canAssign) {
@@ -340,9 +393,9 @@ static void namedVariable(Token name, bool canAssign) {
         }
 
         expression();
-        emitInstructionWithOperand(setOp, arg);
+        emitShort(setOp, arg);
     } else {
-        emitInstructionWithOperand(getOp, arg);
+        emitShort(getOp, arg);
     }
 }
 
@@ -413,6 +466,26 @@ static void number(bool canAssign) {
     emitConstant(NUMBER_VAL(value));
 }
 
+static void and_(bool canAssign) {
+    int endJump = emitJump(OP_JUMP_IF_FALSE);
+
+    emitByte(OP_POP);
+    parsePrecedence(PREC_AND);
+
+    patchJump(endJump);
+}
+
+static void or_(bool canAssign) {
+    int elseJump = emitJump(OP_JUMP_IF_FALSE);
+    int endJump = emitJump(OP_JUMP);
+
+    patchJump(elseJump);
+    emitByte(OP_POP);
+
+    parsePrecedence(PREC_OR);
+    patchJump(endJump);
+}
+
 static void string(bool canAssign) {
     emitConstant(OBJ_VAL(makeString(parser.previous.start + 1, parser.previous.length - 2, true)));
 }
@@ -439,9 +512,17 @@ static void unary(bool canAssign) {
 }
 
 static void conditional(bool canAssign) {
+    int elseJump = emitJump(OP_JUMP_IF_FALSE);
+    emitByte(OP_POP);
     parsePrecedence(PREC_CONDITIONAL);
+
+    int endJump = emitJump(OP_JUMP);
     consume(TOKEN_COLON, "Expected ':' after '?'.");
+    patchJump(elseJump);
+
+    emitByte(OP_POP);
     parsePrecedence(PREC_ASSIGNMENT);
+    patchJump(endJump);
 }
 
 static void expression() {
@@ -480,10 +561,216 @@ static void expressionStatement() {
     emitByte(OP_POP);
 }
 
+static void ifStatement() {
+    consume(TOKEN_LEFT_PAREN, "Expected '(' after 'if'.");
+    expression();
+    consume(TOKEN_RIGHT_PAREN, "Expected ')' after condition.");
+
+    int thenJump = emitJump(OP_JUMP_IF_FALSE);
+    emitByte(OP_POP);
+    statement();
+
+    int elseJump = emitJump(OP_JUMP);
+
+    patchJump(thenJump);
+    emitByte(OP_POP);
+
+    if (match(TOKEN_ELSE)) statement();
+    patchJump(elseJump);
+}
+
 static void printStatement() {
     expression();
     consume(TOKEN_SEMICOLON, "Expected ';' after value.");
     emitByte(OP_PRINT);
+}
+
+static void whileStatement() {
+    int previousLoopStart = current->loopStart;
+    int previousLoopScopeDepth = current->loopScopeDepth;
+    current->loopStart = currentChunk()->count;
+    current->loopScopeDepth = current->scopeDepth;
+
+    consume(TOKEN_LEFT_PAREN, "Expected '(' after 'while'.");
+    expression();
+    consume(TOKEN_RIGHT_PAREN, "Expected ')' after condition.");
+
+    int exitJump = emitJump(OP_JUMP_IF_FALSE);
+    emitByte(OP_POP);
+    int previousCount = current->LoopBreak.count;
+    current->LoopBreak.count = 0;
+    statement();
+    emitLoop(current->loopStart);
+
+    patchJump(exitJump);
+    emitByte(OP_POP);
+    PATCH_BREAK(current->LoopBreak);
+    current->loopStart = previousLoopStart;
+    current->loopScopeDepth = previousLoopScopeDepth;
+    current->LoopBreak.count = previousCount;
+}
+
+static void forStatement() {
+    beginScope();
+    consume(TOKEN_LEFT_PAREN, "Expected '(' after 'for'.");
+
+    // Initializer
+    if (match(TOKEN_SEMICOLON)) {
+        // Do nothing.
+    } else if (match(TOKEN_VAR)) {
+        varDeclaration(false);
+    } else {
+        expressionStatement();
+    }
+
+    // Condition clause
+    int previousLoopStart = current->loopStart;
+    int previousLoopScopeDepth = current->loopScopeDepth;
+    current->loopStart = currentChunk()->count;
+    current->loopScopeDepth = current->scopeDepth;
+
+    int exitJump = -1;
+    if (!match(TOKEN_SEMICOLON)) {
+        expression();
+        consume(TOKEN_SEMICOLON, "Expected ';' after loop condition.");
+
+        exitJump = emitJump(OP_JUMP_IF_FALSE);
+        emitByte(OP_POP);
+    }
+
+    // Increment expression
+    if (!match(TOKEN_RIGHT_PAREN)) {
+        int bodyJump = emitJump(OP_JUMP);
+        int incrementStart = currentChunk()->count;
+        expression();
+        emitByte(OP_POP);
+        consume(TOKEN_RIGHT_PAREN, "Expected ')' after for clauses.");
+
+        emitLoop(current->loopStart);
+        current->loopStart = incrementStart;
+        patchJump(bodyJump);
+    }
+
+    int previousCount = current->LoopBreak.count;
+    current->LoopBreak.count = 0;
+    statement();
+    emitLoop(current->loopStart);
+
+    if (exitJump != -1) {
+        patchJump(exitJump);
+        emitByte(OP_POP);
+    }
+
+    PATCH_BREAK(current->LoopBreak);
+    endScope();
+    current->loopStart = previousLoopStart;
+    current->loopScopeDepth = previousLoopScopeDepth;
+    current->LoopBreak.count = previousCount;
+}
+
+static void breakStatement() {
+#define EMIT_BREAK(breakType) \
+    do {                      \
+        if (breakType.top + 1 > UINT8_MAX) { \
+            error("Too many 'break(s)' in a scope."); \
+            return;           \
+        }                     \
+        breakType.stack[breakType.top++] = emitJump(OP_JUMP); \
+        breakType.count++;    \
+    } while(false)            \
+
+    consume(TOKEN_SEMICOLON, "Expected ';' after 'break'.");
+    if (current->loopStart == -1 && current->switchCaseDepth == 0) {
+        error("Unexpected 'break' outside of switch|for|while statements.");
+        return;
+    }
+
+    if (current->loopStart != -1) {
+        EMIT_BREAK(current->LoopBreak);
+    } else {
+        EMIT_BREAK(current->SwitchBreak);
+    }
+
+#undef EMIT_BREAK
+}
+
+static void continueStatement() {
+    consume(TOKEN_SEMICOLON, "Expected ';' after 'continue'.");
+    if (current->loopStart == -1) {
+        error("Unexpected 'continue' outside of loop.");
+    }
+    uint16_t popCount = 0;
+    for (int i = current->localCount - 1; i >= 0 && current->locals[i].depth > current->loopScopeDepth; i--) {
+        popCount++;
+    }
+
+    if (popCount > 0) {
+        emitShort(OP_POPN, popCount);
+    }
+    emitLoop(current->loopStart);
+}
+
+static void switchStatement() {
+    beginScope();
+    consume(TOKEN_LEFT_PAREN, "Expected '(' after 'switch'.");
+    expression();
+    consume(TOKEN_RIGHT_PAREN, "Expected ')' after condition.");
+    consume(TOKEN_LEFT_BRACE, "Expected '{' before 'switch' body.");
+
+    int previousCount = current->SwitchBreak.count;
+    current->SwitchBreak.count = 0;
+
+    addLocal(parser.previous);
+    markInitialized();
+
+    bool defaultCaseCompiled = false;
+    int fallthroughJump = -1;
+    while (!check(TOKEN_RIGHT_BRACE) && !check(TOKEN_EOF)) {
+        if (!match(TOKEN_SWITCH_CASE) && !match(TOKEN_SWITCH_DEFAULT)) {
+            advance();
+            error("Unexpected keyword inside 'switch' statement.");
+        }
+
+        if (defaultCaseCompiled && parser.previous.type == TOKEN_SWITCH_DEFAULT) {
+            error("switch statement can only have 1 default case.");
+        }
+        if (parser.previous.type == TOKEN_SWITCH_DEFAULT) {
+            defaultCaseCompiled = true;
+            emitByte(OP_TRUE);
+        } else {
+            emitByte(OP_DUPLICATE);
+            expression();
+            emitByte(OP_EQUAL);
+        }
+
+        consume(TOKEN_COLON, "Expected ':' after switch case.");
+
+        int nextCaseJump = emitJump(OP_JUMP_IF_FALSE);
+        emitByte(OP_POP);
+        if (fallthroughJump != -1) {
+            patchJump(fallthroughJump);
+        }
+
+        current->switchCaseDepth++;
+        while (!check(TOKEN_SWITCH_CASE) && !check(TOKEN_SWITCH_DEFAULT) && !check(TOKEN_RIGHT_BRACE) &&
+               !check(TOKEN_EOF)) {
+            statement();
+        }
+        current->switchCaseDepth--;
+
+        fallthroughJump = emitJump(OP_JUMP);
+        patchJump(nextCaseJump);
+        emitByte(OP_POP);
+    }
+    consume(TOKEN_RIGHT_BRACE, "Expected '}' after switch body.");
+
+    if (fallthroughJump != -1) {
+        patchJump(fallthroughJump);
+    }
+
+    PATCH_BREAK(current->SwitchBreak);
+    current->SwitchBreak.count = previousCount;
+    endScope();
 }
 
 static void declaration() {
@@ -501,6 +788,18 @@ static void declaration() {
 static void statement() {
     if (match(TOKEN_PRINT)) {
         printStatement();
+    } else if (match(TOKEN_IF)) {
+        ifStatement();
+    } else if (match(TOKEN_WHILE)) {
+        whileStatement();
+    } else if (match(TOKEN_FOR)) {
+        forStatement();
+    } else if (match(TOKEN_BREAK)) {
+        breakStatement();
+    } else if (match(TOKEN_CONTINUE)) {
+        continueStatement();
+    } else if (match(TOKEN_SWITCH)) {
+        switchStatement();
     } else if (match(TOKEN_LEFT_BRACE)) {
         beginScope();
         block();
@@ -535,7 +834,7 @@ ParseRule rules[] = {
         [TOKEN_IDENTIFIER]    = {variable, NULL, PREC_NONE},
         [TOKEN_STRING]        = {string, NULL, PREC_NONE},
         [TOKEN_NUMBER]        = {number, NULL, PREC_NONE},
-        [TOKEN_AND]           = {NULL, NULL, PREC_NONE},
+        [TOKEN_AND]           = {NULL, and_, PREC_AND},
         [TOKEN_CLASS]         = {NULL, NULL, PREC_NONE},
         [TOKEN_ELSE]          = {NULL, NULL, PREC_NONE},
         [TOKEN_FALSE]         = {literal, NULL, PREC_NONE},
@@ -543,7 +842,7 @@ ParseRule rules[] = {
         [TOKEN_FUN]           = {NULL, NULL, PREC_NONE},
         [TOKEN_IF]            = {NULL, NULL, PREC_NONE},
         [TOKEN_NIL]           = {literal, NULL, PREC_NONE},
-        [TOKEN_OR]            = {NULL, NULL, PREC_NONE},
+        [TOKEN_OR]            = {NULL, or_, PREC_OR},
         [TOKEN_PRINT]         = {NULL, NULL, PREC_NONE},
         [TOKEN_RETURN]        = {NULL, NULL, PREC_NONE},
         [TOKEN_SUPER]         = {NULL, NULL, PREC_NONE},
@@ -552,6 +851,10 @@ ParseRule rules[] = {
         [TOKEN_VAR]           = {NULL, NULL, PREC_NONE},
         [TOKEN_CONST]         = {NULL, NULL, PREC_NONE},
         [TOKEN_WHILE]         = {NULL, NULL, PREC_NONE},
+        [TOKEN_BREAK]         = {NULL, NULL, PREC_NONE},
+        [TOKEN_CONTINUE]      = {NULL, NULL, PREC_NONE},
+        [TOKEN_SWITCH]        = {NULL, NULL, PREC_NONE},
+        [TOKEN_SWITCH_CASE]   = {NULL, NULL, PREC_NONE},
         [TOKEN_ERROR]         = {NULL, NULL, PREC_NONE},
         [TOKEN_EOF]           = {NULL, NULL, PREC_NONE},
 };
