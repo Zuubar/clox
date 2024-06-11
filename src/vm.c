@@ -147,6 +147,9 @@ static InterpretResult run() {
             case OP_FALSE:
                 push(BOOL_VAL(false));
                 break;
+            case OP_DUPLICATE:
+                push(peek(0));
+                break;
             case OP_POP:
                 pop(1);
                 break;

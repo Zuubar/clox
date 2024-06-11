@@ -48,17 +48,30 @@ typedef struct {
     int localCapacity;
     int scopeDepth;
     int loopStart;
+    int switchCaseDepth;
     int loopScopeDepth;
     struct {
         int stack[UINT8_MAX];
         int top;
-        int scopeCount;
-    } Break;
+        int count;
+    } LoopBreak;
+    struct {
+        int stack[UINT8_MAX];
+        int top;
+        int count;
+    } SwitchBreak;
 } Compiler;
 
 Parser parser;
 Compiler *current = NULL;
 Chunk *compilingChunk;
+
+#define PATCH_BREAK(breakType) \
+    do {                       \
+        for (int i = 0; i < (breakType).count; i++) { \
+            patchJump((breakType).stack[--(breakType).top]); \
+        }                      \
+    } while(false)             \
 
 static void expression();
 
@@ -206,12 +219,6 @@ static void patchJump(int offset) {
     currentChunk()->code[offset + 1] = (jump >> 8) & 0xff;
 }
 
-static void patchBreak() {
-    for (int i = 0; i < current->Break.scopeCount; i++) {
-        patchJump(current->Break.stack[--current->Break.top]);
-    }
-}
-
 static uint32_t makeConstant(Value value) {
     ValueArray *globalValues = &buffer.globalVars;
     if (globalValues->count + 1 > UINT16_MAX) {
@@ -230,8 +237,11 @@ static void initCompiler(Compiler *compiler) {
     compiler->localCapacity = LOCALS_MIN;
     compiler->loopStart = -1;
     compiler->loopScopeDepth = -1;
-    compiler->Break.top = 0;
-    compiler->Break.scopeCount = 0;
+    compiler->switchCaseDepth = 0;
+    compiler->LoopBreak.top = 0;
+    compiler->LoopBreak.count = 0;
+    compiler->SwitchBreak.top = 0;
+    compiler->SwitchBreak.count = 0;
     current = compiler;
 }
 
@@ -587,17 +597,17 @@ static void whileStatement() {
 
     int exitJump = emitJump(OP_JUMP_IF_FALSE);
     emitByte(OP_POP);
-    int previousScopeCount = current->Break.scopeCount;
-    current->Break.scopeCount = 0;
+    int previousCount = current->LoopBreak.count;
+    current->LoopBreak.count = 0;
     statement();
     emitLoop(current->loopStart);
 
     patchJump(exitJump);
     emitByte(OP_POP);
-    patchBreak();
+    PATCH_BREAK(current->LoopBreak);
     current->loopStart = previousLoopStart;
     current->loopScopeDepth = previousLoopScopeDepth;
-    current->Break.scopeCount = previousScopeCount;
+    current->LoopBreak.count = previousCount;
 }
 
 static void forStatement() {
@@ -641,8 +651,8 @@ static void forStatement() {
         patchJump(bodyJump);
     }
 
-    int previousScopeCount = current->Break.scopeCount;
-    current->Break.scopeCount = 0;
+    int previousCount = current->LoopBreak.count;
+    current->LoopBreak.count = 0;
     statement();
     emitLoop(current->loopStart);
 
@@ -651,24 +661,37 @@ static void forStatement() {
         emitByte(OP_POP);
     }
 
-    patchBreak();
+    PATCH_BREAK(current->LoopBreak);
     endScope();
     current->loopStart = previousLoopStart;
     current->loopScopeDepth = previousLoopScopeDepth;
-    current->Break.scopeCount = previousScopeCount;
+    current->LoopBreak.count = previousCount;
 }
 
 static void breakStatement() {
+#define EMIT_BREAK(breakType) \
+    do {                      \
+        if (breakType.top + 1 > UINT8_MAX) { \
+            error("Too many 'break(s)' in a scope."); \
+            return;           \
+        }                     \
+        breakType.stack[breakType.top++] = emitJump(OP_JUMP); \
+        breakType.count++;    \
+    } while(false)            \
+
     consume(TOKEN_SEMICOLON, "Expected ';' after 'break'.");
-    if (current->loopStart == -1) {
-        error("Unexpected 'break' outside of loop.");
+    if (current->loopStart == -1 && current->switchCaseDepth == 0) {
+        error("Unexpected 'break' outside of switch|for|while statements.");
+        return;
     }
 
-    if (current->Break.top + 1 > UINT8_MAX) {
-        error("Too many 'break(s)' in a scope.");
+    if (current->loopStart != -1) {
+        EMIT_BREAK(current->LoopBreak);
+    } else {
+        EMIT_BREAK(current->SwitchBreak);
     }
-    current->Break.stack[current->Break.top++] = emitJump(OP_JUMP);
-    current->Break.scopeCount++;
+
+#undef EMIT_BREAK
 }
 
 static void continueStatement() {
@@ -685,6 +708,69 @@ static void continueStatement() {
         emitShort(OP_POPN, popCount);
     }
     emitLoop(current->loopStart);
+}
+
+static void switchStatement() {
+    beginScope();
+    consume(TOKEN_LEFT_PAREN, "Expected '(' after 'switch'.");
+    expression();
+    consume(TOKEN_RIGHT_PAREN, "Expected ')' after condition.");
+    consume(TOKEN_LEFT_BRACE, "Expected '{' before 'switch' body.");
+
+    int previousCount = current->SwitchBreak.count;
+    current->SwitchBreak.count = 0;
+
+    addLocal(parser.previous);
+    markInitialized();
+
+    bool defaultCaseCompiled = false;
+    int fallthroughJump = -1;
+    while (!check(TOKEN_RIGHT_BRACE) && !check(TOKEN_EOF)) {
+        if (!match(TOKEN_SWITCH_CASE) && !match(TOKEN_SWITCH_DEFAULT)) {
+            advance();
+            error("Unexpected keyword inside 'switch' statement.");
+        }
+
+        if (defaultCaseCompiled && parser.previous.type == TOKEN_SWITCH_DEFAULT) {
+            error("switch statement can only have 1 default case.");
+        }
+        if (parser.previous.type == TOKEN_SWITCH_DEFAULT) {
+            defaultCaseCompiled = true;
+            emitByte(OP_TRUE);
+        } else {
+            emitByte(OP_DUPLICATE);
+            expression();
+            emitByte(OP_EQUAL);
+        }
+
+        consume(TOKEN_COLON, "Expected ':' after switch case.");
+
+        int nextCaseJump = emitJump(OP_JUMP_IF_FALSE);
+        emitByte(OP_POP);
+        if (fallthroughJump != -1) {
+            patchJump(fallthroughJump);
+        }
+
+        current->switchCaseDepth++;
+        while (!check(TOKEN_SWITCH_CASE) && !check(TOKEN_SWITCH_DEFAULT) && !check(TOKEN_RIGHT_BRACE) &&
+               !check(TOKEN_EOF)) {
+            statement();
+        }
+        current->switchCaseDepth--;
+
+        fallthroughJump = emitJump(OP_JUMP);
+        patchJump(nextCaseJump);
+        emitByte(OP_POP);
+    }
+    consume(TOKEN_RIGHT_BRACE, "Expected '}' after switch body.");
+
+    if (fallthroughJump != -1) {
+        patchJump(fallthroughJump);
+    }
+
+    PATCH_BREAK(current->SwitchBreak);
+    current->SwitchBreak.count = previousCount;
+    endScope();
 }
 
 static void declaration() {
@@ -712,6 +798,8 @@ static void statement() {
         breakStatement();
     } else if (match(TOKEN_CONTINUE)) {
         continueStatement();
+    } else if (match(TOKEN_SWITCH)) {
+        switchStatement();
     } else if (match(TOKEN_LEFT_BRACE)) {
         beginScope();
         block();
@@ -763,6 +851,10 @@ ParseRule rules[] = {
         [TOKEN_VAR]           = {NULL, NULL, PREC_NONE},
         [TOKEN_CONST]         = {NULL, NULL, PREC_NONE},
         [TOKEN_WHILE]         = {NULL, NULL, PREC_NONE},
+        [TOKEN_BREAK]         = {NULL, NULL, PREC_NONE},
+        [TOKEN_CONTINUE]      = {NULL, NULL, PREC_NONE},
+        [TOKEN_SWITCH]        = {NULL, NULL, PREC_NONE},
+        [TOKEN_SWITCH_CASE]   = {NULL, NULL, PREC_NONE},
         [TOKEN_ERROR]         = {NULL, NULL, PREC_NONE},
         [TOKEN_EOF]           = {NULL, NULL, PREC_NONE},
 };
