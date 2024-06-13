@@ -1,6 +1,7 @@
 #ifndef CLOX_COMPILER_H
 #define CLOX_COMPILER_H
 
+#include "object.h"
 #include "scanner.h"
 #include "vm.h"
 
@@ -14,6 +15,6 @@ typedef struct {
     bool panicMode;
 } Parser;
 
-bool compile(const char *source, Chunk *chunk);
+ObjFunction* compile(const char *source);
 
 #endif //CLOX_COMPILER_H

@@ -60,6 +60,22 @@ ObjString *makeString(const char *chars, int length, bool reference) {
     return string;
 }
 
+ObjFunction *newFunction() {
+    ObjFunction *function = ALLOCATE_OBJ(ObjFunction, OBJ_FUNCTION);
+    function->arity = 0;
+    function->name = NULL;
+    initChunk(&function->chunk);
+    return function;
+}
+
+static void printFunction(ObjFunction* function) {
+    if (function->name == NULL) {
+        printf("<script>");
+        return;
+    }
+    printf("<fn %.*s>", function->name->length, AS_CSTRING(function->name));
+}
+
 void printObject(Value value) {
     switch (OBJ_TYPE(value)) {
         case OBJ_STRING: {
@@ -68,6 +84,10 @@ void printObject(Value value) {
             for (int i = 0; i < strObj->length; i++) {
                 printf("%c", str[i]);
             }
+            break;
+        }
+        case OBJ_FUNCTION: {
+            printFunction(AS_FUNCTION(value));
             break;
         }
         default:
