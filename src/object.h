@@ -3,17 +3,24 @@
 
 #include "common.h"
 #include "value.h"
+#include "chunk.h"
 
 #define OBJ_TYPE(value)     (AS_OBJ(value)->type)
 #define IS_STRING(value)    (isObjType(value, OBJ_STRING))
+#define IS_FUNCTION(value)  (isObjType(value, OBJ_FUNCTION))
+#define IS_NATIVE(value)    (isObjType(value, OBJ_NATIVE))
 
 #define AS_STRING(value)        ((ObjString*)AS_OBJ(value))
 #define AS_CSTRING(objString)   (objString->referenced != NULL ? objString->referenced : objString->chars)
+#define AS_FUNCTION(value)      ((ObjFunction*)AS_OBJ(value))
+#define AS_NATIVE(value)        (((ObjNative*)AS_OBJ(value)))
 #define FREE_STRING(objString)  (reallocate(objString, sizeof(ObjString) + ((objString)->referenced != NULL ? 0 : sizeof(char[(objString)->length + 1])), 0))
 
 
 typedef enum {
     OBJ_STRING,
+    OBJ_FUNCTION,
+    OBJ_NATIVE,
 } ObjType;
 
 struct Obj {
@@ -29,11 +36,30 @@ struct ObjString {
     char chars[];
 };
 
+typedef struct {
+    Obj obj;
+    int arity;
+    Chunk chunk;
+    ObjString *name;
+} ObjFunction;
+
+typedef Value (*NativeFn)(int argCount, Value *args);
+
+typedef struct {
+    Obj obj;
+    NativeFn function;
+    int arity;
+} ObjNative;
+
 uint32_t hashString(const char *key, int length);
 
 struct ObjString *allocateString(int length, bool referenced);
 
 struct ObjString *makeString(const char *chars, int length, bool reference);
+
+ObjFunction *newFunction();
+
+ObjNative *newNative(NativeFn function, int arity);
 
 void printObject(Value value);
 

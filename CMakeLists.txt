@@ -16,3 +16,5 @@ add_executable(clox src/main.c
         src/table.c
         src/buffer.c
 )
+
+target_link_libraries(clox m)

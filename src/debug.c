@@ -2,9 +2,15 @@
 
 #include "debug.h"
 #include "value.h"
+#include "object.h"
 
-void disassembleChunk(Chunk *chunk, const char *name) {
-    printf("== %s ==\n", name);
+void disassembleChunk(Chunk *chunk, ObjString * name) {
+    if (name == NULL) {
+        printf("== <script> ==\n");
+    } else {
+        printf("== %.*s ==\n", name->length, AS_CSTRING(name));
+    }
+
 
     for (int offset = 0; offset < chunk->count;) {
         offset = disassembleInstruction(chunk, offset);
@@ -32,6 +38,13 @@ inline static int constantInstructionLong(Chunk *chunk, int offset) {
     printValue(chunk->constants.values[operand]);
     printf("'\n");
     return offset + 4;
+}
+
+static int byteInstruction(const char* name, Chunk* chunk,
+                           int offset) {
+    uint8_t slot = chunk->code[offset + 1];
+    printf("%-16s %4d\n", name, slot);
+    return offset + 2;
 }
 
 inline static int shortInstruction(const char *name, Chunk *chunk, int offset) {
@@ -113,6 +126,8 @@ int disassembleInstruction(Chunk *chunk, int offset) {
             return jumpInstruction("OP_JUMP_IF_FALSE", 1, chunk, offset);
         case OP_LOOP:
             return jumpInstruction("OP_LOOP", -1, chunk, offset);
+        case OP_CALL:
+            return byteInstruction("OP_CALL", chunk, offset);
         case OP_RETURN:
             return simpleInstruction("OP_RETURN", offset);
         default:

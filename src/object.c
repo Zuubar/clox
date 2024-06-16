@@ -60,6 +60,29 @@ ObjString *makeString(const char *chars, int length, bool reference) {
     return string;
 }
 
+ObjFunction *newFunction() {
+    ObjFunction *function = ALLOCATE_OBJ(ObjFunction, OBJ_FUNCTION);
+    function->arity = 0;
+    function->name = NULL;
+    initChunk(&function->chunk);
+    return function;
+}
+
+ObjNative *newNative(NativeFn function, int arity) {
+    ObjNative* native = ALLOCATE_OBJ(ObjNative, OBJ_NATIVE);
+    native->function = function;
+    native->arity = arity;
+    return native;
+}
+
+static void printFunction(ObjFunction *function) {
+    if (function->name == NULL) {
+        printf("<script>");
+        return;
+    }
+    printf("<fn %.*s>", function->name->length, AS_CSTRING(function->name));
+}
+
 void printObject(Value value) {
     switch (OBJ_TYPE(value)) {
         case OBJ_STRING: {
@@ -70,8 +93,15 @@ void printObject(Value value) {
             }
             break;
         }
+        case OBJ_FUNCTION: {
+            printFunction(AS_FUNCTION(value));
+            break;
+        }
+        case OBJ_NATIVE:
+            printf("<native fn>");
+            break;
         default:
-            printf("Unreachable.");
+            printf("Unknown object.");
             break;
     }
 }
