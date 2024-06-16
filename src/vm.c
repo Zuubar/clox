@@ -1,6 +1,8 @@
+#include <math.h>
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
+#include <time.h>
 #include "buffer.h"
 #include "common.h"
 #include "debug.h"
@@ -10,6 +12,52 @@
 
 Buffer buffer;
 VM vm;
+
+static void runtimeError(const char *format, ...);
+
+static Value clockNative(int argCount, Value *args) {
+    return NUMBER_VAL((double) clock() / CLOCKS_PER_SEC);
+}
+
+static Value strNative(int argCount, Value *args) {
+    Value value = args[0];
+    switch (value.type) {
+        case VAL_BOOL:
+            return OBJ_VAL(AS_BOOL(value) ? makeString("true", 4, false) : makeString("false", 5, false));
+        case VAL_NIL:
+            return OBJ_VAL(makeString("nil", 3, false));
+        case VAL_NUMBER: {
+            char buff[32];
+            int written = snprintf(buff, 32, "%g", AS_NUMBER(value));
+            return OBJ_VAL(makeString(buff, written > 31 ? 31 : written, false));
+        }
+        case VAL_OBJ:
+            switch (OBJ_TYPE(value)) {
+                case OBJ_STRING: {
+                    return value;
+                }
+                case OBJ_FUNCTION: {
+                    char buff[64];
+                    ObjFunction *function = AS_FUNCTION(value);
+                    int written = snprintf(buff, 64, "<fn %.*s>", function->name->length, AS_CSTRING(function->name));
+                    return OBJ_VAL(makeString(buff, written > 63 ? 63 : written, false));
+                }
+                case OBJ_NATIVE:
+                    return OBJ_VAL(makeString("<native fn>", 11, false));
+            }
+        default:
+            runtimeError("Unsupported type.");
+            return UNDEFINED_VAL;
+    }
+}
+
+static Value sqrtNative(int argCount, Value *args) {
+    if (!IS_NUMBER(args[0])) {
+        runtimeError("Argument should be a number.");
+        return UNDEFINED_VAL;
+    }
+    return NUMBER_VAL(sqrt(AS_NUMBER(args[0])));
+}
 
 static void resetStack() {
     vm.stackTop = &vm.stack[0];
@@ -38,11 +86,27 @@ static void runtimeError(const char *format, ...) {
     resetStack();
 }
 
+static void defineNative(const char *name, NativeFn function, int arity) {
+    push(OBJ_VAL(makeString(name, (int) strlen(name), false)));
+    push(OBJ_VAL(newNative(function, arity)));
+
+    // Todo: validate size constraints
+    writeValueArray(&buffer.globalVars, vm.stack[0]);
+    writeValueArray(&buffer.globalVars, vm.stack[1]);
+    tableSet(&buffer.globalVarIdentifiers, vm.stack[0], NUMBER_VAL(buffer.globalVars.count - 1));
+
+    pop(2);
+}
+
 void initVM() {
     resetStack();
     vm.objects = NULL;
     initTable(&vm.strings, VAL_OBJ);
     initBuffer(&buffer);
+
+    defineNative("clock", clockNative, 0);
+    defineNative("str", strNative, 1);
+    defineNative("sqrt", sqrtNative, 1);
 }
 
 void freeVM() {
@@ -93,6 +157,21 @@ static bool callValue(Value callee, int argCount) {
         switch (OBJ_TYPE(callee)) {
             case OBJ_FUNCTION:
                 return call(AS_FUNCTION(callee), argCount);
+            case OBJ_NATIVE: {
+                ObjNative *native = AS_NATIVE(callee);
+                if (native->arity != argCount) {
+                    runtimeError("Expected %d arguments but got %d.",
+                                 native->arity, argCount);
+                    return false;
+                }
+                Value result = native->function(argCount, vm.stackTop - argCount);
+                if (IS_UNDEFINED(result)) {
+                    return false;
+                }
+                vm.stackTop -= argCount + 1;
+                push(result);
+                return true;
+            }
             default:
                 break;
         }
@@ -130,8 +209,9 @@ static void concatenate() {
 
 static InterpretResult run() {
     CallFrame *frame = &vm.frames[vm.frameCount - 1];
+    register uint8_t *ip = frame->ip;
 
-#define READ_BYTE() (*frame->ip++)
+#define READ_BYTE() (*(ip++))
 #define READ_SHORT() ({ \
     uint8_t byte1 = READ_BYTE(); \
     uint8_t byte2 = READ_BYTE(); \
@@ -145,14 +225,15 @@ static InterpretResult run() {
     (frame->function->chunk.constants.values[(byte1 | (byte2 << 8) | (byte3 << 16))]); \
 })
 #define BINARY_OP(valueType, op) \
-    do {                  \
+    do {                         \
         if (!IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1))) { \
+            frame->ip = ip;      \
             runtimeError("Operands must be numbers.");    \
             return INTERPRET_RUNTIME_ERROR;               \
-        }                                                 \
-        double b = AS_NUMBER(pop(1));                      \
-        double a = AS_NUMBER(pop(1));                      \
-        push(valueType(a op b));                          \
+        }                        \
+        double b = AS_NUMBER(pop(1));                     \
+        double a = AS_NUMBER(pop(1));                     \
+        push(valueType(a op b)); \
     } while(false)
 
     for (;;) {
@@ -164,7 +245,7 @@ static InterpretResult run() {
             printf(" ]");
         }
         printf("\n");
-        disassembleInstruction(&frame->function->chunk, (int) (frame->ip - frame->function->chunk.code));
+        disassembleInstruction(&frame->function->chunk, (int) (ip - frame->function->chunk.code));
 #endif
         uint8_t instruction;
         switch (instruction = READ_BYTE()) {
@@ -196,6 +277,7 @@ static InterpretResult run() {
                 uint16_t variableIndex = READ_SHORT();
                 Value *globals = buffer.globalVars.values;
                 if (globals[variableIndex].type == VAL_UNDEFINED) {
+                    frame->ip = ip;
                     ObjString *varName = AS_STRING(globals[variableIndex - 1]);
                     runtimeError("Undefined variable '%.*s'.", varName->length, AS_CSTRING(varName));
                     return INTERPRET_RUNTIME_ERROR;
@@ -210,6 +292,7 @@ static InterpretResult run() {
                 Value *globals = buffer.globalVars.values;
 
                 if (globals[variableIndex].type == VAL_UNDEFINED) {
+                    frame->ip = ip;
                     ObjString *varName = AS_STRING(globals[variableIndex - 1]);
                     runtimeError("Undefined variable '%.*s'.", varName->length, AS_CSTRING(varName));
                     return INTERPRET_RUNTIME_ERROR;
@@ -254,6 +337,7 @@ static InterpretResult run() {
                     double a = AS_NUMBER(pop(1));
                     push(NUMBER_VAL(a + b));
                 } else {
+                    frame->ip = ip;
                     runtimeError("Operands must be two numbers or two strings.");
                     return INTERPRET_RUNTIME_ERROR;
                 }
@@ -272,6 +356,7 @@ static InterpretResult run() {
                 break;
             case OP_NEGATE:
                 if (!IS_NUMBER(peek(0))) {
+                    frame->ip = ip;
                     runtimeError("Operand must be a number.");
                     return INTERPRET_RUNTIME_ERROR;
                 }
@@ -283,25 +368,27 @@ static InterpretResult run() {
                 break;
             case OP_JUMP: {
                 uint16_t offset = READ_SHORT();
-                frame->ip += offset;
+                ip += offset;
                 break;
             }
             case OP_JUMP_IF_FALSE: {
                 uint16_t offset = READ_SHORT();
-                frame->ip += isFalsey(peek(0)) * offset;
+                ip += isFalsey(peek(0)) * offset;
                 break;
             }
             case OP_LOOP: {
                 uint16_t offset = READ_SHORT();
-                frame->ip -= offset;
+                ip -= offset;
                 break;
             }
             case OP_CALL: {
                 uint8_t argCount = READ_BYTE();
+                frame->ip = ip;
                 if (!callValue(peek(argCount), argCount)) {
                     return INTERPRET_RUNTIME_ERROR;
                 }
                 frame = &vm.frames[vm.frameCount - 1];
+                ip = frame->ip;
                 break;
             }
             case OP_RETURN: {
@@ -315,6 +402,7 @@ static InterpretResult run() {
                 vm.stackTop = frame->slots;
                 push(result);
                 frame = &vm.frames[vm.frameCount - 1];
+                ip = frame->ip;
                 break;
             }
         }

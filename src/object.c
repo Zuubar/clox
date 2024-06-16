@@ -68,7 +68,14 @@ ObjFunction *newFunction() {
     return function;
 }
 
-static void printFunction(ObjFunction* function) {
+ObjNative *newNative(NativeFn function, int arity) {
+    ObjNative* native = ALLOCATE_OBJ(ObjNative, OBJ_NATIVE);
+    native->function = function;
+    native->arity = arity;
+    return native;
+}
+
+static void printFunction(ObjFunction *function) {
     if (function->name == NULL) {
         printf("<script>");
         return;
@@ -90,8 +97,11 @@ void printObject(Value value) {
             printFunction(AS_FUNCTION(value));
             break;
         }
+        case OBJ_NATIVE:
+            printf("<native fn>");
+            break;
         default:
-            printf("Unreachable.");
+            printf("Unknown object.");
             break;
     }
 }

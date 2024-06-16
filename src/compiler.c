@@ -73,7 +73,6 @@ typedef struct Compiler {
 
 Parser parser;
 Compiler *current = NULL;
-Chunk *compilingChunk;
 
 #define PATCH_BREAK(breakType) \
     do {                       \
@@ -611,7 +610,6 @@ static void function(FunctionType type) {
 
     ObjFunction *function = endCompiler();
     emitConstant(OBJ_VAL(function));
-//    emitBytes(OP_CONSTANT, makeConstant(OBJ_VAL(function))); //Todo: adjust for OP_CONSTANT_LONG
 }
 
 static void funDeclaration() {
