@@ -87,10 +87,14 @@ static void runtimeError(const char *format, ...) {
 }
 
 static void defineNative(const char *name, NativeFn function, int arity) {
+    if (buffer.globalVars.count + 1 > 0) {
+        fprintf(stderr, "Too many native functions.\n");
+        exit(127);
+    }
+
     push(OBJ_VAL(makeString(name, (int) strlen(name), false)));
     push(OBJ_VAL(newNative(function, arity)));
 
-    // Todo: validate size constraints
     writeValueArray(&buffer.globalVars, vm.stack[0]);
     writeValueArray(&buffer.globalVars, vm.stack[1]);
     tableSet(&buffer.globalVarIdentifiers, vm.stack[0], NUMBER_VAL(buffer.globalVars.count - 1));
