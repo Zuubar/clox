@@ -87,7 +87,7 @@ static void runtimeError(const char *format, ...) {
 }
 
 static void defineNative(const char *name, NativeFn function, int arity) {
-    if (buffer.globalVars.count + 1 > 0) {
+    if (buffer.globalVars.count + 1 > UINT16_MAX) {
         fprintf(stderr, "Too many native functions.\n");
         exit(127);
     }
