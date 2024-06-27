@@ -205,7 +205,7 @@ inline static void emitShort(uint8_t instruction, uint32_t operand) {
     emitByte((uint8_t) ((operand >> 8) & 0xff));
 }
 
-inline static void emitLong(uint8_t instruction, uint32_t operand) {
+inline static void emitLong(uint8_t instruction, int operand) {
     if (operand > UINT24_MAX) {
         error("Unsupported number of resources for this operation.");
         return;
@@ -787,12 +787,16 @@ static void whileStatement() {
 static void forStatement() {
     beginScope();
     consume(TOKEN_LEFT_PAREN, "Expected '(' after 'for'.");
+    int loopVarSlot = -1;
+    Token loopVarName;
 
     // Initializer
     if (match(TOKEN_SEMICOLON)) {
         // Do nothing.
     } else if (match(TOKEN_VAR)) {
+        loopVarName = parser.current;
         varDeclaration(false);
+        loopVarSlot = current->localCount - 1;
     } else {
         expressionStatement();
     }
@@ -827,7 +831,25 @@ static void forStatement() {
 
     int previousCount = current->LoopBreak.count;
     current->LoopBreak.count = 0;
+
+    int loopShadowSlot = -1;
+    if (loopVarSlot != -1) {
+        beginScope();
+        emitShort(OP_GET_LOCAL, loopVarSlot);
+        addLocal(loopVarName);
+        markInitialized(false);
+        loopShadowSlot = current->localCount - 1;
+    }
+
     statement();
+
+    if (loopVarSlot != -1) {
+        emitShort(OP_GET_LOCAL, loopShadowSlot);
+        emitShort(OP_SET_LOCAL, loopVarSlot);
+        emitByte(OP_POP);
+        endScope();
+    }
+
     emitLoop(current->loopStart);
 
     if (exitJump != -1) {

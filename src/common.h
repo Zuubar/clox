@@ -2,7 +2,7 @@
 #define CLOX_COMMON_H
 
 #define DEBUG_PRINT_CODE
-//#define DEBUG_TRACE_EXECUTION
+#define DEBUG_TRACE_EXECUTION
 #define UINT24_MAX 16777216
 
 #include <stdbool.h>
