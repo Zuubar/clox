@@ -80,12 +80,11 @@ static bool skipWhitespace() {
                 advance();
                 break;
             case '/':
-                advance();
-                if (peek() == '/') {
+                if (peekNext() == '/') {
                     while (peek() != '\n' && !isAtEnd()) advance();
                     break;
-                } else if (peek() == '*') {
-                    advance();
+                } else if (peekNext() == '*') {
+                    advance(); advance();
                     int indents = 1;
 
                     while (indents > 0 && !isAtEnd()) {
@@ -270,6 +269,8 @@ Token scanToken() {
             return makeToken(TOKEN_SLASH);
         case '*':
             return makeToken(TOKEN_STAR);
+        case '%':
+            return makeToken(TOKEN_MODULO);
         case '?':
             return makeToken(TOKEN_QUESTION);
         case ':':

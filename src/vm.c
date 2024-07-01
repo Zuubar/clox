@@ -114,9 +114,9 @@ void initVM() {
     initTable(&vm.strings, VAL_OBJ);
     initBuffer(&buffer);
 
-//    defineNative("clock", clockNative, 0);
-//    defineNative("str", strNative, 1);
-//    defineNative("sqrt", sqrtNative, 1);
+    defineNative("clock", clockNative, 0);
+    defineNative("str", strNative, 1);
+    defineNative("sqrt", sqrtNative, 1);
 }
 
 void freeVM() {
@@ -268,16 +268,16 @@ static InterpretResult run() {
     (byte1 | (byte2 << 8) | (byte3 << 16)); \
 })
 #define READ_CONSTANT() (frame->closure->function->chunk.constants.values[READ_LONG()])
-#define BINARY_OP(valueType, op) \
-    do {                         \
+#define BINARY_OP(valueType, op, type) \
+    do {                               \
         if (!IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1))) { \
-            frame->ip = ip;      \
+            frame->ip = ip;            \
             runtimeError("Operands must be numbers.");    \
             return INTERPRET_RUNTIME_ERROR;               \
-        }                        \
-        double b = AS_NUMBER(pop(1));                     \
-        double a = AS_NUMBER(pop(1));                     \
-        push(valueType(a op b)); \
+        }                              \
+        type b = AS_NUMBER(pop(1));    \
+        type a = AS_NUMBER(pop(1));    \
+        push(valueType(a op b));       \
     } while(false)
 
     for (;;) {
@@ -376,10 +376,10 @@ static InterpretResult run() {
                 break;
             }
             case OP_GREATER:
-                BINARY_OP(BOOL_VAL, >);
+                BINARY_OP(BOOL_VAL, >, double);
                 break;
             case OP_LESS:
-                BINARY_OP(BOOL_VAL, <);
+                BINARY_OP(BOOL_VAL, <, double);
                 break;
             case OP_ADD:
                 if (IS_STRING(peek(0)) && IS_STRING(peek(1))) {
@@ -395,13 +395,16 @@ static InterpretResult run() {
                 }
                 break;
             case OP_SUBTRACT:
-                BINARY_OP(NUMBER_VAL, -);
+                BINARY_OP(NUMBER_VAL, -, double);
                 break;
             case OP_MULTIPLY:
-                BINARY_OP(NUMBER_VAL, *);
+                BINARY_OP(NUMBER_VAL, *, double);
                 break;
             case OP_DIVIDE:
-                BINARY_OP(NUMBER_VAL, /);
+                BINARY_OP(NUMBER_VAL, /, double);
+                break;
+            case OP_MODULO:
+                BINARY_OP(NUMBER_VAL, %, int);
                 break;
             case OP_NOT:
                 push(BOOL_VAL(isFalsey(pop(1))));
