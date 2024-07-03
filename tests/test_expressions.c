@@ -14,7 +14,7 @@ void testArithmeticExpressions() {
             {"100 % 19",    "5"},
             {"13 + 15 % 6", "16"},
     };
-    testExpressions(cases, sizeof(cases) / sizeof(cases[0]));
+    TEST_EXPRESSIONS(cases);
 }
 
 void testBooleanExpressions() {
@@ -39,5 +39,5 @@ void testBooleanExpressions() {
             {"true ? 1 : 0",                             "1"},
             {"29 > 31 ? false : 31 > 29 ? true : false", "true"},
     };
-    testExpressions(cases, sizeof(cases) / sizeof(cases[0]));
+    TEST_EXPRESSIONS(cases);
 }

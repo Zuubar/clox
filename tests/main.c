@@ -2,8 +2,6 @@
 #include "unity.h"
 #include "../src/compiler.h"
 
-typedef void (*TestFn)();
-
 void setUp() {
     initVM();
 }
@@ -22,5 +20,8 @@ int main() {
     RUN_TEST(testIfStatement);
     RUN_TEST(testWhileStatement);
     RUN_TEST(testForStatement);
+    RUN_TEST(testSwitchStatement);
+    RUN_TEST(testFunctions);
+    RUN_TEST(testNativeStrFunction);
     return UNITY_END();
 }

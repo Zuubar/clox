@@ -6,7 +6,8 @@
 #include "unity.h"
 
 bool interpretTest(const char *source, char *buffer, int buffLen) {
-    fflush(stdout); fflush(stderr);
+    fflush(stdout);
+    fflush(stderr);
     int outPipedes[2];
     int errPipedes[2];
     int outFd = dup(STDOUT_FILENO);
@@ -23,7 +24,8 @@ bool interpretTest(const char *source, char *buffer, int buffLen) {
     close(errPipedes[1]);
 
     InterpretResult result = interpret(source);
-    fflush(stdout); fflush(stderr);
+    fflush(stdout);
+    fflush(stderr);
 
     dup2(outFd, STDOUT_FILENO);
     dup2(errFd, STDERR_FILENO);
@@ -42,22 +44,22 @@ void testExpressions(const char *cases[][2], int length) {
     for (int i = 0; i < length; i++) {
         char buffer[256] = {0}, testCase[256] = {0}, testExpected[256] = {0}, testError[256] = {0};
 
-        snprintf(testCase, 256, "print (%s);", cases[i][0]);
-        snprintf(testExpected, 256, "%s\n", cases[i][1]);
-        snprintf(testError, 256, "Test #%d", i);
+        snprintf(testCase, sizeof(testCase) / sizeof(testCase[0]), "print (%s);", cases[i][0]);
+        snprintf(testExpected, sizeof(testExpected) / sizeof(testExpected[0]), "%s\n", cases[i][1]);
+        snprintf(testError, sizeof(testError) / sizeof(testError[0]), "Test #%d", i);
 
-        interpretTest(testCase, buffer, 256);
+        interpretTest(testCase, buffer, (sizeof(buffer) / sizeof(buffer[0])) - 1);
         UNITY_TEST_ASSERT_EQUAL_STRING(testExpected, buffer, __LINE__, testError);
     }
 }
 
 void testPrograms(const char *cases[][2], int length) {
     for (int i = 0; i < length; i++) {
-        char buffer[256] = {0}, testError[256] = {0};
+        char buffer[2048] = {0}, testError[256] = {0};
 
-        snprintf(testError, 256, "Test #%d", i);
+        snprintf(testError, (sizeof(testError) / sizeof(testError[0])) - 1, "Test #%d", i);
 
-        interpretTest(cases[i][0], buffer, 256);
+        interpretTest(cases[i][0], buffer, (sizeof(buffer) / sizeof(buffer[0])) - 1);
         UNITY_TEST_ASSERT_EQUAL_STRING(cases[i][1], buffer, __LINE__, testError);
     }
 }

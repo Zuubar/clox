@@ -861,6 +861,10 @@ static void forStatement() {
     }
 
     PATCH_BREAK(current->LoopBreak);
+    if (current->LoopBreak.count > 0 && loopVarSlot != -1) {
+        emitByte(OP_POP);
+    }
+
     endScope();
     current->loopStart = previousLoopStart;
     current->loopScopeDepth = previousLoopScopeDepth;

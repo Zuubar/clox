@@ -20,7 +20,6 @@ static Value clockNative(int argCount, Value *args) {
 }
 
 static Value strNative(int argCount, Value *args) {
-    // Todo: handle new OBJ_CLOSURE
     Value value = args[0];
     switch (value.type) {
         case VAL_BOOL:
@@ -37,18 +36,14 @@ static Value strNative(int argCount, Value *args) {
                 case OBJ_STRING: {
                     return value;
                 }
-                case OBJ_FUNCTION: {
+                case OBJ_NATIVE:
+                    return OBJ_VAL(makeString("<native fn>", 11, false));
+                case OBJ_CLOSURE: {
                     char buff[64];
-                    ObjFunction *function = AS_FUNCTION(value);
+                    ObjFunction *function = AS_CLOSURE(value)->function;
                     int written = snprintf(buff, 64, "<fn %.*s>", function->name->length, AS_CSTRING(function->name));
                     return OBJ_VAL(makeString(buff, written > 63 ? 63 : written, false));
                 }
-                case OBJ_NATIVE:
-                    return OBJ_VAL(makeString("<native fn>", 11, false));
-                case OBJ_CLOSURE:
-                    break;
-                case OBJ_UPVALUE:
-                    break;
             }
         default:
             runtimeError("Unsupported type.");
@@ -242,7 +237,6 @@ static void concatenate() {
 
     ObjString *interned = tableFindString(&vm.strings, result->chars, length, result->hash);
     if (interned != NULL) {
-        FREE_STRING(result);
         result = interned;
     } else {
         tableSet(&vm.strings, OBJ_VAL(result), NIL_VAL);
