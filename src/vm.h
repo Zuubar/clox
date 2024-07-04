@@ -11,7 +11,7 @@
 #include "object.h"
 
 typedef struct {
-    ObjFunction *function;
+    ObjClosure *closure;
     uint8_t *ip;
     Value *slots;
 } CallFrame;
@@ -24,6 +24,7 @@ typedef struct {
     Value *stackTop;
     Table strings;
     Obj *objects;
+    ObjUpvalue *openUpvalues;
 } VM;
 
 typedef enum {

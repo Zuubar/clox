@@ -14,6 +14,8 @@
 
 #endif
 
+#define UINT8_COUNT (UINT8_MAX + 1)
+
 typedef enum {
     PREC_NONE,
     PREC_ASSIGNMENT,  // =
@@ -40,7 +42,14 @@ typedef struct {
 typedef struct {
     Token name;
     int depth;
+    bool isConst;
+    bool isCaptured;
 } Local;
+
+typedef struct {
+    uint8_t index;
+    bool isLocal;
+} Upvalue;
 
 typedef enum {
     TYPE_FUNCTION,
@@ -48,9 +57,11 @@ typedef enum {
 } FunctionType;
 
 typedef struct Compiler {
-    struct Compiler* enclosing;
+    struct Compiler *enclosing;
     ObjFunction *function;
     FunctionType type;
+
+    Upvalue upvalues[UINT8_COUNT];
 
     Local *locals;
     int localCount;
@@ -184,13 +195,6 @@ static void emitBytes(uint8_t byte1, uint8_t byte2) {
     emitByte(byte2);
 }
 
-static int emitJump(uint8_t instruction) {
-    emitByte(instruction);
-    emitByte(0xff);
-    emitByte(0xff);
-    return currentChunk()->count - 2;
-}
-
 inline static void emitShort(uint8_t instruction, uint32_t operand) {
     if (operand > UINT16_MAX) {
         error("Unsupported number of resources for this operation.");
@@ -199,6 +203,24 @@ inline static void emitShort(uint8_t instruction, uint32_t operand) {
     emitByte(instruction);
     emitByte((uint8_t) operand & 0xff);
     emitByte((uint8_t) ((operand >> 8) & 0xff));
+}
+
+inline static void emitLong(uint8_t instruction, int operand) {
+    if (operand > UINT24_MAX) {
+        error("Unsupported number of resources for this operation.");
+        return;
+    }
+    emitByte(instruction);
+    emitByte((uint8_t) operand & 0xff);
+    emitByte((uint8_t) ((operand >> 8) & 0xff));
+    emitByte((uint8_t) ((operand >> 16) & 0xff));
+}
+
+static int emitJump(uint8_t instruction) {
+    emitByte(instruction);
+    emitByte(0xff);
+    emitByte(0xff);
+    return currentChunk()->count - 2;
 }
 
 static void emitLoop(int loopStart) {
@@ -229,7 +251,7 @@ static void patchJump(int offset) {
     currentChunk()->code[offset + 1] = (jump >> 8) & 0xff;
 }
 
-static uint32_t makeConstant(Value value) {
+static int makeConstant(Value value) {
     ValueArray *globalValues = &buffer.globalVars;
     if (globalValues->count + 1 > UINT16_MAX) {
         error("Too many globalValues in one chunk.");
@@ -268,6 +290,8 @@ static void initCompiler(Compiler *compiler, FunctionType type) {
     local->depth = 0;
     local->name.start = "";
     local->name.length = 0;
+    local->isConst = false;
+    local->isCaptured = false;
 }
 
 static ObjFunction *endCompiler() {
@@ -292,16 +316,17 @@ static void endScope() {
 
     uint16_t popCount = 0;
     while (current->localCount > 0 && current->locals[current->localCount - 1].depth > current->scopeDepth) {
+        if (current->locals[current->localCount - 1].isCaptured) {
+            emitByte(OP_CLOSE_UPVALUE);
+        } else {
+            emitByte(OP_POP);
+        }
         popCount++;
         current->localCount--;
     }
-    if (popCount == 0) {
-        return;
-    }
-    emitShort(OP_POPN, popCount);
 }
 
-static uint32_t identifierConstant(Token *name) {
+static int identifierConstant(Token *name) {
     Value variable = OBJ_VAL(makeString(name->start, name->length, true));
     Value identifier;
 
@@ -309,7 +334,7 @@ static uint32_t identifierConstant(Token *name) {
         return AS_NUMBER(identifier);
     }
 
-    uint32_t newIdentifier = makeConstant(variable);
+    int newIdentifier = makeConstant(variable);
     tableSet(&buffer.globalVarIdentifiers, variable, NUMBER_VAL(newIdentifier));
     return newIdentifier;
 }
@@ -322,7 +347,7 @@ static bool identifiersEqual(Token *a, Token *b) {
 }
 
 
-static uint32_t resolveLocal(Compiler *compiler, Token *name) {
+static int resolveLocal(Compiler *compiler, Token *name) {
     for (int i = compiler->localCount - 1; i >= 0; i--) {
         Local *local = &compiler->locals[i];
         if (identifiersEqual(&local->name, name)) {
@@ -331,6 +356,45 @@ static uint32_t resolveLocal(Compiler *compiler, Token *name) {
             }
             return i;
         }
+    }
+
+    return -1;
+}
+
+static int addUpvalue(Compiler *compiler, int index, bool isLocal) {
+    int upvalueCount = compiler->function->upvalueCount;
+
+    for (int i = 0; i < upvalueCount; i++) {
+        Upvalue *upvalue = &compiler->upvalues[i];
+        if (upvalue->index == index && upvalue->isLocal == isLocal) {
+            return i;
+        }
+    }
+
+    if (upvalueCount == UINT8_COUNT) {
+        error("Too many closure variables in function.");
+        return 0;
+    }
+
+    compiler->upvalues[upvalueCount].isLocal = isLocal;
+    compiler->upvalues[upvalueCount].index = index;
+    return compiler->function->upvalueCount++;
+}
+
+static int resolveUpvalue(Compiler *compiler, Token *name) {
+    if (compiler->enclosing == NULL) {
+        return -1;
+    }
+
+    int local = resolveLocal(compiler->enclosing, name);
+    if (local != -1) {
+        compiler->enclosing->locals[local].isCaptured = true;
+        return addUpvalue(compiler, local, true);
+    }
+
+    int upvalue = resolveUpvalue(compiler->enclosing, name);
+    if (upvalue != -1) {
+        return addUpvalue(compiler, upvalue, false);
     }
 
     return -1;
@@ -351,6 +415,8 @@ static void addLocal(Token name) {
     Local *local = &current->locals[current->localCount++];
     local->name = name;
     local->depth = -1;
+    local->isConst = false;
+    local->isCaptured = false;
 }
 
 static void declareVariable() {
@@ -383,21 +449,23 @@ static uint32_t parseVariable(const char *errorMessage) {
     return identifierConstant(&parser.previous);
 }
 
-static void markInitialized() {
+static void markInitialized(bool isConst) {
     if (current->scopeDepth == 0) {
         return;
     }
     Local *local = &current->locals[current->localCount - 1];
     local->depth = current->scopeDepth;
+    local->isConst = isConst;
 }
 
 static void defineVariable(uint32_t global, Token name, bool isConst) {
+    if (current->scopeDepth > 0) {
+        markInitialized(isConst);
+        return;
+    }
+
     if (isConst) {
         tableSet(&buffer.constVarIdentifiers, OBJ_VAL(makeString(name.start, name.length, true)), BOOL_VAL(true));
-    }
-    if (current->scopeDepth > 0) {
-        markInitialized();
-        return;
     }
 
     emitShort(OP_DEFINE_GLOBAL, global);
@@ -420,11 +488,14 @@ static uint8_t argumentList() {
 
 static void namedVariable(Token name, bool canAssign) {
     uint8_t getOp, setOp;
-    uint32_t arg = resolveLocal(current, &name);
+    int arg = resolveLocal(current, &name);
 
     if (arg != -1) {
         getOp = OP_GET_LOCAL;
         setOp = OP_SET_LOCAL;
+    } else if ((arg = resolveUpvalue(current, &name)) != -1) {
+        getOp = OP_GET_UPVALUE;
+        setOp = OP_SET_UPVALUE;
     } else {
         arg = identifierConstant(&name);
         getOp = OP_GET_GLOBAL;
@@ -433,7 +504,8 @@ static void namedVariable(Token name, bool canAssign) {
 
     if (canAssign && match(TOKEN_EQUAL)) {
         Value val;
-        if (tableGet(&buffer.constVarIdentifiers, OBJ_VAL(makeString(name.start, name.length, true)), &val)) {
+        if ((tableGet(&buffer.constVarIdentifiers, OBJ_VAL(makeString(name.start, name.length, true)), &val)) ||
+            (arg != -1 && setOp != OP_SET_GLOBAL && current->locals[arg].isConst)) {
             error("Cannot assign to a constant variable.");
             return;
         }
@@ -480,6 +552,9 @@ static void binary(bool canAssign) {
             break;
         case TOKEN_SLASH:
             emitByte(OP_DIVIDE);
+            break;
+        case TOKEN_MODULO:
+            emitByte(OP_MODULO);
             break;
         default:
             return; // Unreachable.
@@ -602,20 +677,25 @@ static void function(FunctionType type) {
             }
             uint32_t constant = parseVariable("Expected parameter name.");
             defineVariable(constant, parser.previous, false);
-        } while(match(TOKEN_COMMA));
+        } while (match(TOKEN_COMMA));
     }
     consume(TOKEN_RIGHT_PAREN, "Expected ')' after parameters.");
     consume(TOKEN_LEFT_BRACE, "Expected '{' before function body.");
     block();
 
     ObjFunction *function = endCompiler();
-    emitConstant(OBJ_VAL(function));
+    emitLong(OP_CLOSURE, addConstant(currentChunk(), OBJ_VAL(function)));
+
+    for (int i = 0; i < function->upvalueCount; i++) {
+        emitByte(compiler.upvalues[i].isLocal ? 1 : 0);
+        emitByte(compiler.upvalues[i].index);
+    }
 }
 
 static void funDeclaration() {
     Token name = parser.current;
     uint32_t global = parseVariable("Expected function name.");
-    markInitialized();
+    markInitialized(false);
     function(TYPE_FUNCTION);
     defineVariable(global, name, false);
 }
@@ -710,12 +790,16 @@ static void whileStatement() {
 static void forStatement() {
     beginScope();
     consume(TOKEN_LEFT_PAREN, "Expected '(' after 'for'.");
+    int loopVarSlot = -1;
+    Token loopVarName;
 
     // Initializer
     if (match(TOKEN_SEMICOLON)) {
         // Do nothing.
     } else if (match(TOKEN_VAR)) {
+        loopVarName = parser.current;
         varDeclaration(false);
+        loopVarSlot = current->localCount - 1;
     } else {
         expressionStatement();
     }
@@ -750,7 +834,25 @@ static void forStatement() {
 
     int previousCount = current->LoopBreak.count;
     current->LoopBreak.count = 0;
+
+    int loopShadowSlot = -1;
+    if (loopVarSlot != -1) {
+        beginScope();
+        emitShort(OP_GET_LOCAL, loopVarSlot);
+        addLocal(loopVarName);
+        markInitialized(false);
+        loopShadowSlot = current->localCount - 1;
+    }
+
     statement();
+
+    if (loopVarSlot != -1) {
+        emitShort(OP_GET_LOCAL, loopShadowSlot);
+        emitShort(OP_SET_LOCAL, loopVarSlot);
+        emitByte(OP_POP);
+        endScope();
+    }
+
     emitLoop(current->loopStart);
 
     if (exitJump != -1) {
@@ -759,6 +861,10 @@ static void forStatement() {
     }
 
     PATCH_BREAK(current->LoopBreak);
+    if (current->LoopBreak.count > 0 && loopVarSlot != -1) {
+        emitByte(OP_POP);
+    }
+
     endScope();
     current->loopStart = previousLoopStart;
     current->loopScopeDepth = previousLoopScopeDepth;
@@ -818,7 +924,7 @@ static void switchStatement() {
     current->SwitchBreak.count = 0;
 
     addLocal(parser.previous);
-    markInitialized();
+    markInitialized(false);
 
     bool defaultCaseCompiled = false;
     int fallthroughJump = -1;
@@ -922,6 +1028,7 @@ ParseRule rules[] = {
         [TOKEN_SEMICOLON]     = {NULL, NULL, PREC_NONE},
         [TOKEN_SLASH]         = {NULL, binary, PREC_FACTOR},
         [TOKEN_STAR]          = {NULL, binary, PREC_FACTOR},
+        [TOKEN_MODULO]        = {NULL, binary, PREC_FACTOR},
         [TOKEN_BANG]          = {unary, NULL, PREC_NONE},
         [TOKEN_BANG_EQUAL]    = {NULL, binary, PREC_EQUALITY},
         [TOKEN_QUESTION]      = {NULL, conditional, PREC_CONDITIONAL},

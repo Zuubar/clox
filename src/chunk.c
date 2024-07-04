@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include "chunk.h"
 #include "line.h"
 
@@ -34,17 +35,16 @@ int addConstant(Chunk *chunk, Value value) {
 }
 
 int writeConstant(Chunk *chunk, Value value, int line) {
-    int constant = addConstant(chunk, value);
-
-    if (constant <= UINT8_MAX) {
-        writeChunk(chunk, OP_CONSTANT, line);
-        writeChunk(chunk, constant, line);
-    } else {
-        writeChunk(chunk, OP_CONSTANT_LONG, line);
-        writeChunk(chunk, (uint8_t) constant & 0xff, line);
-        writeChunk(chunk, (uint8_t)((constant >> 8) & 0xff), line);
-        writeChunk(chunk, (uint8_t)((constant >> 16) & 0xff), line);
+    if (chunk->constants.count + 1 == UINT24_MAX) {
+        printf("Too many constant in one chunk.");
+        exit(127);
     }
+
+    int constant = addConstant(chunk, value);
+    writeChunk(chunk, OP_CONSTANT, line);
+    writeChunk(chunk, (uint8_t) constant & 0xff, line);
+    writeChunk(chunk, (uint8_t)((constant >> 8) & 0xff), line);
+    writeChunk(chunk, (uint8_t)((constant >> 16) & 0xff), line);
 
     return constant;
 }

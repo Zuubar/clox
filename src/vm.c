@@ -36,14 +36,14 @@ static Value strNative(int argCount, Value *args) {
                 case OBJ_STRING: {
                     return value;
                 }
-                case OBJ_FUNCTION: {
+                case OBJ_NATIVE:
+                    return OBJ_VAL(makeString("<native fn>", 11, false));
+                case OBJ_CLOSURE: {
                     char buff[64];
-                    ObjFunction *function = AS_FUNCTION(value);
+                    ObjFunction *function = AS_CLOSURE(value)->function;
                     int written = snprintf(buff, 64, "<fn %.*s>", function->name->length, AS_CSTRING(function->name));
                     return OBJ_VAL(makeString(buff, written > 63 ? 63 : written, false));
                 }
-                case OBJ_NATIVE:
-                    return OBJ_VAL(makeString("<native fn>", 11, false));
             }
         default:
             runtimeError("Unsupported type.");
@@ -62,6 +62,7 @@ static Value sqrtNative(int argCount, Value *args) {
 static void resetStack() {
     vm.stackTop = &vm.stack[0];
     vm.frameCount = 0;
+    vm.openUpvalues = NULL;
 }
 
 static void runtimeError(const char *format, ...) {
@@ -73,7 +74,7 @@ static void runtimeError(const char *format, ...) {
 
     for (int i = vm.frameCount - 1; i >= 0; i--) {
         CallFrame *frame = &vm.frames[i];
-        ObjFunction *function = frame->function;
+        ObjFunction *function = frame->closure->function;
         size_t instruction = frame->ip - function->chunk.code - 1;
         uint32_t line = getLine(&function->chunk.lines, instruction);
         fprintf(stderr, "[line %u] in ", line);
@@ -137,7 +138,8 @@ static Value peek(int distance) {
     return *(vm.stackTop - 1 - distance);
 }
 
-static bool call(ObjFunction *function, int argCount) {
+static bool call(ObjClosure *closure, int argCount) {
+    ObjFunction *function = closure->function;
     if (argCount != function->arity) {
         runtimeError("Expected %d arguments but got %d.",
                      function->arity, argCount);
@@ -150,7 +152,7 @@ static bool call(ObjFunction *function, int argCount) {
     }
 
     CallFrame *frame = &vm.frames[vm.frameCount++];
-    frame->function = function;
+    frame->closure = closure;
     frame->ip = function->chunk.code;
     frame->slots = (vm.stackTop - argCount - 1);
     return true;
@@ -159,8 +161,8 @@ static bool call(ObjFunction *function, int argCount) {
 static bool callValue(Value callee, int argCount) {
     if (IS_OBJ(callee)) {
         switch (OBJ_TYPE(callee)) {
-            case OBJ_FUNCTION:
-                return call(AS_FUNCTION(callee), argCount);
+            case OBJ_CLOSURE:
+                return call(AS_CLOSURE(callee), argCount);
             case OBJ_NATIVE: {
                 ObjNative *native = AS_NATIVE(callee);
                 if (native->arity != argCount) {
@@ -185,6 +187,39 @@ static bool callValue(Value callee, int argCount) {
     return false;
 }
 
+static ObjUpvalue *captureUpvalue(Value *local) {
+    ObjUpvalue *prevUpvalue = NULL;
+    ObjUpvalue *upvalue = vm.openUpvalues;
+    while (upvalue != NULL && upvalue->location > local) {
+        prevUpvalue = upvalue;
+        upvalue = upvalue->next;
+    }
+
+    if (upvalue != NULL && upvalue->location == local) {
+        return upvalue;
+    }
+
+    ObjUpvalue *createdUpvalue = newUpvalue(local);
+    createdUpvalue->next = upvalue;
+
+    if (prevUpvalue == NULL) {
+        vm.openUpvalues = createdUpvalue;
+    } else {
+        prevUpvalue->next = createdUpvalue;
+    }
+
+    return createdUpvalue;
+}
+
+static void closeUpvalues(Value* last) {
+    while (vm.openUpvalues != NULL && vm.openUpvalues->location >= last) {
+        ObjUpvalue *upvalue = vm.openUpvalues;
+        upvalue->closed = *upvalue->location;
+        upvalue->location = &upvalue->closed;
+        vm.openUpvalues = upvalue->next;
+    }
+}
+
 static bool isFalsey(Value value) {
     return IS_NIL(value) || (IS_BOOL(value) && !AS_BOOL(value));
 }
@@ -202,7 +237,6 @@ static void concatenate() {
 
     ObjString *interned = tableFindString(&vm.strings, result->chars, length, result->hash);
     if (interned != NULL) {
-        FREE_STRING(result);
         result = interned;
     } else {
         tableSet(&vm.strings, OBJ_VAL(result), NIL_VAL);
@@ -221,23 +255,23 @@ static InterpretResult run() {
     uint8_t byte2 = READ_BYTE(); \
     (byte1 | (byte2 << 8)); \
 })
-#define READ_CONSTANT() (frame->function->chunk.constants.values[READ_BYTE()])
-#define READ_CONSTANT_LONG() ({ \
-    uint8_t byte1 = READ_BYTE();\
-    uint8_t byte2 = READ_BYTE();\
-    uint8_t byte3 = READ_BYTE();\
-    (frame->function->chunk.constants.values[(byte1 | (byte2 << 8) | (byte3 << 16))]); \
+#define READ_LONG() ({ \
+    uint8_t byte1 = READ_BYTE(); \
+    uint8_t byte2 = READ_BYTE(); \
+    uint8_t byte3 = READ_BYTE(); \
+    (byte1 | (byte2 << 8) | (byte3 << 16)); \
 })
-#define BINARY_OP(valueType, op) \
-    do {                         \
+#define READ_CONSTANT() (frame->closure->function->chunk.constants.values[READ_LONG()])
+#define BINARY_OP(valueType, op, type) \
+    do {                               \
         if (!IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1))) { \
-            frame->ip = ip;      \
+            frame->ip = ip;            \
             runtimeError("Operands must be numbers.");    \
             return INTERPRET_RUNTIME_ERROR;               \
-        }                        \
-        double b = AS_NUMBER(pop(1));                     \
-        double a = AS_NUMBER(pop(1));                     \
-        push(valueType(a op b)); \
+        }                              \
+        type b = AS_NUMBER(pop(1));    \
+        type a = AS_NUMBER(pop(1));    \
+        push(valueType(a op b));       \
     } while(false)
 
     for (;;) {
@@ -249,14 +283,12 @@ static InterpretResult run() {
             printf(" ]");
         }
         printf("\n");
-        disassembleInstruction(&frame->function->chunk, (int) (ip - frame->function->chunk.code));
+        disassembleInstruction(&frame->closure->function->chunk, (int) (ip - frame->closure->function->chunk.code));
 #endif
         uint8_t instruction;
         switch (instruction = READ_BYTE()) {
-            case OP_CONSTANT:
-            case OP_CONSTANT_LONG: {
-                Value constant = (instruction == OP_CONSTANT ? READ_CONSTANT() : READ_CONSTANT_LONG());
-                push(constant);
+            case OP_CONSTANT: {
+                push(READ_CONSTANT());
                 break;
             }
             case OP_NIL:
@@ -321,6 +353,16 @@ static InterpretResult run() {
                 frame->slots[slot] = peek(0);
                 break;
             }
+            case OP_GET_UPVALUE: {
+                uint16_t slot = READ_SHORT();
+                push(*frame->closure->upvalues[slot]->location);
+                break;
+            }
+            case OP_SET_UPVALUE: {
+                uint16_t slot = READ_SHORT();
+                *frame->closure->upvalues[slot]->location = peek(0);
+                break;
+            }
             case OP_EQUAL: {
                 Value b = pop(1);
                 Value a = pop(1);
@@ -328,10 +370,10 @@ static InterpretResult run() {
                 break;
             }
             case OP_GREATER:
-                BINARY_OP(BOOL_VAL, >);
+                BINARY_OP(BOOL_VAL, >, double);
                 break;
             case OP_LESS:
-                BINARY_OP(BOOL_VAL, <);
+                BINARY_OP(BOOL_VAL, <, double);
                 break;
             case OP_ADD:
                 if (IS_STRING(peek(0)) && IS_STRING(peek(1))) {
@@ -347,13 +389,16 @@ static InterpretResult run() {
                 }
                 break;
             case OP_SUBTRACT:
-                BINARY_OP(NUMBER_VAL, -);
+                BINARY_OP(NUMBER_VAL, -, double);
                 break;
             case OP_MULTIPLY:
-                BINARY_OP(NUMBER_VAL, *);
+                BINARY_OP(NUMBER_VAL, *, double);
                 break;
             case OP_DIVIDE:
-                BINARY_OP(NUMBER_VAL, /);
+                BINARY_OP(NUMBER_VAL, /, double);
+                break;
+            case OP_MODULO:
+                BINARY_OP(NUMBER_VAL, %, int);
                 break;
             case OP_NOT:
                 push(BOOL_VAL(isFalsey(pop(1))));
@@ -395,8 +440,25 @@ static InterpretResult run() {
                 ip = frame->ip;
                 break;
             }
+            case OP_CLOSURE: {
+                ObjFunction *function = AS_FUNCTION(READ_CONSTANT());
+                ObjClosure *closure = newClosure(function);
+                push(OBJ_VAL(closure));
+                for (int i = 0; i < closure->upvalueCount; i++) {
+                    uint8_t isLocal = READ_BYTE();
+                    uint8_t index = READ_BYTE();
+                    closure->upvalues[i] = isLocal ? captureUpvalue(frame->slots + index)
+                                                   : frame->closure->upvalues[index];
+                }
+                break;
+            }
+            case OP_CLOSE_UPVALUE:
+                closeUpvalues(vm.stackTop - 1);
+                pop(1);
+                break;
             case OP_RETURN: {
                 Value result = pop(1);
+                closeUpvalues(frame->slots);
                 vm.frameCount--;
                 if (vm.frameCount == 0) {
                     pop(1); // pop script function at the bottom of the stack
@@ -414,8 +476,8 @@ static InterpretResult run() {
 
 #undef READ_BYTE
 #undef READ_SHORT
+#undef READ_LONG
 #undef READ_CONSTANT
-#undef READ_CONSTANT_LONG
 #undef BINARY_OP
 }
 
@@ -424,7 +486,10 @@ InterpretResult interpret(const char *source) {
     if (function == NULL) return INTERPRET_COMPILE_ERROR;
 
     push(OBJ_VAL(function));
-    call(function, 0);
+    ObjClosure *closure = newClosure(function);
+    pop(1);
+    push(OBJ_VAL(closure));
+    call(closure, 0);
 
     return run();
 }
