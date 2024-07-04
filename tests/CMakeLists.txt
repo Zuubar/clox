@@ -1,3 +1,12 @@
-file(GLOB SOURCES "./*.c")
-add_executable(clox_tests ${SOURCES})
-target_link_libraries(clox_tests unity clox_lib)
+file(GLOB SOURCES "./test_*.c")
+
+function(create_test_executable test_file)
+    get_filename_component(test_name ${test_file} NAME_WE)
+    add_executable(${test_name} ${test_file} common.c)
+    target_link_libraries(${test_name} unity clox_lib)
+    add_test(NAME ${test_name} COMMAND ${test_name})
+endfunction()
+
+foreach(test_file ${SOURCES})
+    create_test_executable(${test_file})
+endforeach()

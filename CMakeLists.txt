@@ -7,6 +7,7 @@ set(EXECUTABLE_OUTPUT_PATH ${PROJECT_BINARY_DIR}/bin)
 
 add_subdirectory(src)
 if (${CMAKE_BUILD_TYPE} STREQUAL "Test")
+    include(CTest)
     add_subdirectory(unity)
     add_subdirectory(tests)
 endif ()

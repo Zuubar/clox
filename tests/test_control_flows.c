@@ -1,4 +1,6 @@
 #include "common.h"
+#include "unity.h"
+#include "../src/compiler.h"
 
 void testIfStatement() {
     const char *program1 = "var num = 32;"
@@ -292,4 +294,21 @@ void testSwitchStatement() {
             {program2, "2\nJ\n2\nJ\n3\nJ\n4\nI\n2\nJ\n2\nJ\n3\nJ\n4\nI\n3\n3\nJ\n3\nJ\n4\nI\n3\ndefault\n"},
     };
     TEST_PROGRAMS(cases);
+}
+
+void setUp() {
+    initVM();
+}
+
+void tearDown() {
+    freeVM();
+}
+
+int main() {
+    UNITY_BEGIN();
+    RUN_TEST(testIfStatement);
+    RUN_TEST(testWhileStatement);
+    RUN_TEST(testForStatement);
+    RUN_TEST(testSwitchStatement);
+    return UNITY_END();
 }

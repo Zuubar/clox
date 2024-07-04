@@ -5,7 +5,7 @@
 #include "../src/compiler.h"
 #include "unity.h"
 
-bool interpretTest(const char *source, char *buffer, int buffLen) {
+static bool interpretTest(const char *source, char *buffer, int buffLen) {
     fflush(stdout);
     fflush(stderr);
     int outPipedes[2];

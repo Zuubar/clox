@@ -1,4 +1,6 @@
 #include "common.h"
+#include "unity.h"
+#include "../src/compiler.h"
 
 void testArithmeticExpressions() {
     const char *cases[][2] = {
@@ -40,4 +42,19 @@ void testBooleanExpressions() {
             {"29 > 31 ? false : 31 > 29 ? true : false", "true"},
     };
     TEST_EXPRESSIONS(cases);
+}
+
+void setUp() {
+    initVM();
+}
+
+void tearDown() {
+    freeVM();
+}
+
+int main() {
+    UNITY_BEGIN();
+    RUN_TEST(testArithmeticExpressions);
+    RUN_TEST(testBooleanExpressions);
+    return UNITY_END();
 }

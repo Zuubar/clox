@@ -1,4 +1,6 @@
 #include "common.h"
+#include "../src/compiler.h"
+#include "unity_internals.h"
 
 void testFunctions() {
     const char *program1 = "fun sum(a, b) {"
@@ -81,4 +83,18 @@ void testNativeStrFunction() {
              "false\ntrue\nnil\n128\n1e+124\n<fn QDkwKxRmhgZhrwnMnOzjkgVHmfxVbboRVhawfCMQjcpVDFnAlNjuYBADQFX\n<fn very_very_very_very_very_very_very_very_very_very_long_func\n<fn fib>\n<native fn>\n"},
     };
     TEST_PROGRAMS(cases);
+}
+
+void setUp() {
+    initVM();
+}
+
+void tearDown() {
+    freeVM();
+}
+
+int main() {
+    RUN_TEST(testFunctions);
+    RUN_TEST(testNativeStrFunction);
+    return UNITY_END();
 }

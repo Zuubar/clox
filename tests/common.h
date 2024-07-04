@@ -14,32 +14,32 @@
     } while(false)           \
 
 
-bool interpretTest(const char *source, char *buffer, int buffLen);
+//bool interpretTest(const char *source, char *buffer, int buffLen);
 
 void testExpressions(const char *cases[][2], int length);
 
 void testPrograms(const char *cases[][2], int length);
 
-void testBooleanExpressions();
-
-void testArithmeticExpressions();
-
-void testGlobalVariables();
-
-void testAssignment();
-
-void testScope();
-
-void testIfStatement();
-
-void testWhileStatement();
-
-void testForStatement();
-
-void testSwitchStatement();
-
-void testFunctions();
-
-void testNativeStrFunction();
+//void testBooleanExpressions();
+//
+//void testArithmeticExpressions();
+//
+//void testGlobalVariables();
+//
+//void testAssignment();
+//
+//void testScope();
+//
+//void testIfStatement();
+//
+//void testWhileStatement();
+//
+//void testForStatement();
+//
+//void testSwitchStatement();
+//
+//void testFunctions();
+//
+//void testNativeStrFunction();
 
 #endif //COMMON_H

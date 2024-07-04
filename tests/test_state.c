@@ -1,5 +1,6 @@
 #include "common.h"
 #include "unity.h"
+#include "../src/compiler.h"
 
 void testGlobalVariables() {
     const char *program1 = "var v = \"global\";"
@@ -94,4 +95,20 @@ void testScope() {
             {program2, "inner a\nouter b\nglobal c\nouter a\nouter b\nglobal c\nglobal a\nglobal b\nglobal c\n"},
     };
     testPrograms(cases, sizeof(cases) / sizeof(cases[0]));
+}
+
+void setUp() {
+    initVM();
+}
+
+void tearDown() {
+    freeVM();
+}
+
+int main() {
+    UNITY_BEGIN();
+    RUN_TEST(testGlobalVariables);
+    RUN_TEST(testAssignment);
+    RUN_TEST(testScope);
+    return UNITY_END();
 }
