@@ -98,11 +98,11 @@ void testScope() {
 }
 
 void setUp() {
-    initVM();
+
 }
 
 void tearDown() {
-    freeVM();
+
 }
 
 int main() {

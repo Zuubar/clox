@@ -15,6 +15,8 @@ typedef struct {
     bool panicMode;
 } Parser;
 
-ObjFunction* compile(const char *source);
+ObjFunction *compile(const char *source);
+
+void markCompilerRoots();
 
 #endif //CLOX_COMPILER_H

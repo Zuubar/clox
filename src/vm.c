@@ -106,6 +106,14 @@ static void defineNative(const char *name, NativeFn function, int arity) {
 void initVM() {
     resetStack();
     vm.objects = NULL;
+
+    vm.bytesAllocated = 0;
+    vm.nextGC = 1024 * 1024;
+
+    vm.grayCount = 0;
+    vm.grayCapacity = 0;
+    vm.grayStack = NULL;
+
     initTable(&vm.strings, VAL_OBJ);
     initBuffer(&buffer);
 
@@ -211,7 +219,7 @@ static ObjUpvalue *captureUpvalue(Value *local) {
     return createdUpvalue;
 }
 
-static void closeUpvalues(Value* last) {
+static void closeUpvalues(Value *last) {
     while (vm.openUpvalues != NULL && vm.openUpvalues->location >= last) {
         ObjUpvalue *upvalue = vm.openUpvalues;
         upvalue->closed = *upvalue->location;
@@ -225,8 +233,8 @@ static bool isFalsey(Value value) {
 }
 
 static void concatenate() {
-    ObjString *objB = (ObjString *) AS_OBJ(pop(1));
-    ObjString *objA = (ObjString *) AS_OBJ(pop(1));
+    ObjString *objB = (ObjString *) AS_OBJ(peek(0));
+    ObjString *objA = (ObjString *) AS_OBJ(peek(1));
 
     int length = objA->length + objB->length;
     ObjString *result = allocateString(length, false);
@@ -239,9 +247,12 @@ static void concatenate() {
     if (interned != NULL) {
         result = interned;
     } else {
+        push(OBJ_VAL(result));
         tableSet(&vm.strings, OBJ_VAL(result), NIL_VAL);
+        pop(1);
     }
 
+    pop(2);
     push(OBJ_VAL(result));
 }
 

@@ -11,7 +11,10 @@ typedef struct {
 
 extern Buffer buffer;
 
-void initBuffer(Buffer* buff);
-void freeBuffer(Buffer* buff);
+void initBuffer(Buffer *buff);
+
+void freeBuffer(Buffer *buff);
+
+void markBufferRoots();
 
 #endif //CLOX_BUFFER_H
