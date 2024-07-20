@@ -257,8 +257,10 @@ static int makeConstant(Value value) {
         error("Too many globalValues in one chunk.");
         return 0;
     }
+    push(value);
     writeValueArray(globalValues, value);
     writeValueArray(globalValues, UNDEFINED_VAL);
+    pop(1);
     return globalValues->count - 1;
 }
 
@@ -1107,4 +1109,12 @@ ObjFunction *compile(const char *source) {
     }
     ObjFunction *function = endCompiler();
     return parser.hadError ? NULL : function;
+}
+
+void markCompilerRoots() {
+    Compiler *compiler = current;
+    while (compiler != NULL) {
+        markObject((Obj *) compiler->function);
+        compiler = compiler->enclosing;
+    }
 }

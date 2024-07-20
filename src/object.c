@@ -22,9 +22,15 @@ uint32_t hashString(const char *key, int length) {
 static Obj *allocateObject(size_t size, ObjType type) {
     Obj *object = (Obj *) reallocate(NULL, 0, size);
     object->type = type;
+    object->isMarked = false;
 
     object->next = vm.objects;
     vm.objects = object;
+
+
+#ifdef DEBUG_LOG_GC
+    printf("%p allocate %zu for %d\n", (void *) object, size, type);
+#endif
 
     return object;
 }
@@ -54,9 +60,11 @@ ObjString *makeString(const char *chars, int length, bool reference) {
         memcpy(string->chars, chars, length);
         string->chars[length] = '\0';
     }
-
     string->hash = hash;
+
+    push(OBJ_VAL(string));
     tableSet(&vm.strings, OBJ_VAL(string), NIL_VAL);
+    pop(1);
     return string;
 }
 
@@ -70,7 +78,7 @@ ObjFunction *newFunction() {
 }
 
 ObjNative *newNative(NativeFn function, int arity) {
-    ObjNative* native = ALLOCATE_OBJ(ObjNative, OBJ_NATIVE);
+    ObjNative *native = ALLOCATE_OBJ(ObjNative, OBJ_NATIVE);
     native->function = function;
     native->arity = arity;
     return native;
@@ -89,7 +97,7 @@ ObjClosure *newClosure(ObjFunction *function) {
     return closure;
 }
 
-ObjUpvalue *newUpvalue(Value* value) {
+ObjUpvalue *newUpvalue(Value *value) {
     ObjUpvalue *upvalue = ALLOCATE_OBJ(ObjUpvalue, OBJ_UPVALUE);
     upvalue->location = value;
     upvalue->next = NULL;

@@ -1,6 +1,5 @@
 #include "common.h"
 #include "unity.h"
-#include "../src/compiler.h"
 
 void testArithmeticExpressions() {
     const char *cases[][2] = {
@@ -44,17 +43,31 @@ void testBooleanExpressions() {
     TEST_EXPRESSIONS(cases);
 }
 
+void testStringExpressions() {
+    const char *cases[][2] = {
+            {"\"\"",                                                   ""},
+            {"\"string\"",                                             "string"},
+            {"\"str\" + \"ing\"",                                      "string"},
+            {"\"st\" + \"ri\" + \"ng\"",                               "string"},
+            {"\"s\" + \"t\" + \"r\" + \"i\" + \"n\" + \"g\"",          "string"},
+            {"\"clox\" + \" \" + \"-\" + \" \" + \"superset of lox\"", "clox - superset of lox"},
+
+    };
+    TEST_EXPRESSIONS(cases);
+}
+
 void setUp() {
-    initVM();
+
 }
 
 void tearDown() {
-    freeVM();
+
 }
 
 int main() {
     UNITY_BEGIN();
     RUN_TEST(testArithmeticExpressions);
     RUN_TEST(testBooleanExpressions);
+    RUN_TEST(testStringExpressions);
     return UNITY_END();
 }

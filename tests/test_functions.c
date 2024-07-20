@@ -86,14 +86,15 @@ void testNativeStrFunction() {
 }
 
 void setUp() {
-    initVM();
+
 }
 
 void tearDown() {
-    freeVM();
+
 }
 
 int main() {
+    UNITY_BEGIN();
     RUN_TEST(testFunctions);
     RUN_TEST(testNativeStrFunction);
     return UNITY_END();

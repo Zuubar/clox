@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include "chunk.h"
 #include "line.h"
+#include "vm.h"
 
 void initChunk(Chunk *chunk) {
     chunk->count = 0;
@@ -30,7 +31,9 @@ void writeChunk(Chunk *chunk, uint8_t byte, uint32_t line) {
 }
 
 int addConstant(Chunk *chunk, Value value) {
+    push(value);
     writeValueArray(&chunk->constants, value);
+    pop(1);
     return chunk->constants.count - 1;
 }
 
@@ -41,10 +44,12 @@ int writeConstant(Chunk *chunk, Value value, int line) {
     }
 
     int constant = addConstant(chunk, value);
+    push(value);
     writeChunk(chunk, OP_CONSTANT, line);
     writeChunk(chunk, (uint8_t) constant & 0xff, line);
     writeChunk(chunk, (uint8_t)((constant >> 8) & 0xff), line);
     writeChunk(chunk, (uint8_t)((constant >> 16) & 0xff), line);
+    pop(1);
 
     return constant;
 }

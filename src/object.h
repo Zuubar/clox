@@ -30,8 +30,9 @@ typedef enum {
 } ObjType;
 
 struct Obj {
-    ObjType type;
     struct Obj *next;
+    ObjType type;
+    bool isMarked;
 };
 
 struct ObjString {

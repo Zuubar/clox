@@ -297,11 +297,11 @@ void testSwitchStatement() {
 }
 
 void setUp() {
-    initVM();
+
 }
 
 void tearDown() {
-    freeVM();
+
 }
 
 int main() {

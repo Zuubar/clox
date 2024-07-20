@@ -23,7 +23,10 @@ static bool interpretTest(const char *source, char *buffer, int buffLen) {
     close(outPipedes[1]);
     close(errPipedes[1]);
 
+    initVM();
     InterpretResult result = interpret(source);
+    freeVM();
+
     fflush(stdout);
     fflush(stderr);
 
