@@ -44,6 +44,23 @@ static Value strNative(int argCount, Value *args) {
                     int written = snprintf(buff, 64, "<fn %.*s>", function->name->length, AS_CSTRING(function->name));
                     return OBJ_VAL(makeString(buff, written > 63 ? 63 : written, false));
                 }
+                case OBJ_FUNCTION:
+                    break;
+                case OBJ_UPVALUE:
+                    return OBJ_VAL(makeString("upvalue", 7, false));
+                case OBJ_CLASS: {
+                    char buff[64];
+                    ObjClass *klass = AS_CLASS(value);
+                    int written = snprintf(buff, 64, "<fn %.*s>", klass->name->length, AS_CSTRING(klass->name));
+                    return OBJ_VAL(makeString(buff, written > 63 ? 63 : written, false));
+                }
+                case OBJ_INSTANCE: {
+                    char buff[64];
+                    ObjInstance *instance = AS_INSTANCE(value);
+                    int written = snprintf(buff, 64, "<fn %.*s>", instance->klass->name->length,
+                                           AS_CSTRING(instance->klass->name));
+                    return OBJ_VAL(makeString(buff, written > 63 ? 63 : written, false));
+                }
             }
         default:
             runtimeError("Unsupported type.");
@@ -58,6 +75,64 @@ static Value sqrtNative(int argCount, Value *args) {
     }
     return NUMBER_VAL(sqrt(AS_NUMBER(args[0])));
 }
+
+static Value getFieldNative(int argCount, Value *args) {
+    if (!IS_INSTANCE(args[0])) {
+        runtimeError("First argument should be a class instance.");
+        return UNDEFINED_VAL;
+    }
+
+    if (!IS_STRING(args[1])) {
+        runtimeError("Second argument should be a string.");
+        return UNDEFINED_VAL;
+    }
+
+    ObjInstance *instance = AS_INSTANCE(args[0]);
+    ObjString *name = AS_STRING(args[1]);
+    Value value;
+
+    if (!tableGet(&instance->fields, args[1], &value)) {
+        runtimeError("Undefined field '%.*s'.", name->length, AS_CSTRING(name));
+        return UNDEFINED_VAL;
+    }
+
+    return value;
+}
+
+static Value setFieldNative(int argCount, Value *args) {
+    if (!IS_INSTANCE(args[0])) {
+        runtimeError("First argument should be a class instance.");
+        return UNDEFINED_VAL;
+    }
+
+    if (!IS_STRING(args[1])) {
+        runtimeError("Second argument should be a string.");
+        return UNDEFINED_VAL;
+    }
+
+    ObjInstance *instance = AS_INSTANCE(args[0]);
+    tableSet(&instance->fields, args[1], args[2]);
+
+    return NIL_VAL;
+}
+
+static Value deleteFieldNative(int argCount, Value *args) {
+    if (!IS_INSTANCE(args[0])) {
+        runtimeError("First argument should be a class instance.");
+        return UNDEFINED_VAL;
+    }
+
+    if (!IS_STRING(args[1])) {
+        runtimeError("Second argument should be a string.");
+        return UNDEFINED_VAL;
+    }
+
+    ObjInstance *instance = AS_INSTANCE(args[0]);
+    tableDelete(&instance->fields, &args[1]);
+
+    return NIL_VAL;
+}
+
 
 static void resetStack() {
     vm.stackTop = &vm.stack[0];
@@ -120,6 +195,9 @@ void initVM() {
     defineNative("clock", clockNative, 0);
     defineNative("str", strNative, 1);
     defineNative("sqrt", sqrtNative, 1);
+    defineNative("getField", getFieldNative, 2);
+    defineNative("setField", setFieldNative, 3);
+    defineNative("deleteField", deleteFieldNative, 2);
 }
 
 void freeVM() {
@@ -184,6 +262,11 @@ static bool callValue(Value callee, int argCount) {
                 }
                 vm.stackTop -= argCount + 1;
                 push(result);
+                return true;
+            }
+            case OBJ_CLASS: {
+                ObjClass *klass = AS_CLASS(callee);
+                vm.stackTop[-argCount - 1] = OBJ_VAL(newInstance(klass));
                 return true;
             }
             default:
@@ -374,6 +457,37 @@ static InterpretResult run() {
                 *frame->closure->upvalues[slot]->location = peek(0);
                 break;
             }
+            case OP_GET_PROPERTY: {
+                if (!IS_INSTANCE(peek(0))) {
+                    runtimeError("Only instances have properties.");
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                ObjInstance *instance = AS_INSTANCE(peek(0));
+                ObjString *name = AS_STRING(READ_CONSTANT());
+
+                Value value;
+                if (tableGet(&instance->fields, OBJ_VAL(name), &value)) {
+                    pop(1);
+                    push(value);
+                    break;
+                }
+
+                runtimeError("Undefined property '%.*s'.", name->length, AS_CSTRING(name));
+                return INTERPRET_RUNTIME_ERROR;
+            }
+            case OP_SET_PROPERTY: {
+                if (!IS_INSTANCE(peek(1))) {
+                    runtimeError("Only instances have fields.");
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+
+                ObjInstance *instance = AS_INSTANCE(peek(1));
+                tableSet(&instance->fields, READ_CONSTANT(), peek(0));
+                Value value = pop(1);
+                pop(1);
+                push(value);
+                break;
+            }
             case OP_EQUAL: {
                 Value b = pop(1);
                 Value a = pop(1);
@@ -480,6 +594,10 @@ static InterpretResult run() {
                 push(result);
                 frame = &vm.frames[vm.frameCount - 1];
                 ip = frame->ip;
+                break;
+            }
+            case OP_CLASS: {
+                push(OBJ_VAL(newClass(AS_STRING(READ_CONSTANT()))));
                 break;
             }
         }

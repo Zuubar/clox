@@ -19,7 +19,7 @@
 typedef enum {
     PREC_NONE,
     PREC_ASSIGNMENT,  // =
-    PREC_CONDITIONAL,     // ?:
+    PREC_CONDITIONAL, // ?:
     PREC_OR,          // or
     PREC_AND,         // and
     PREC_EQUALITY,    // == !=
@@ -328,7 +328,7 @@ static void endScope() {
     }
 }
 
-static int identifierConstant(Token *name) {
+static int createGlobalVariable(Token *name) {
     Value variable = OBJ_VAL(makeString(name->start, name->length, true));
     Value identifier;
 
@@ -448,7 +448,7 @@ static uint32_t parseVariable(const char *errorMessage) {
     if (current->scopeDepth > 0) {
         return 0;
     }
-    return identifierConstant(&parser.previous);
+    return createGlobalVariable(&parser.previous);
 }
 
 static void markInitialized(bool isConst) {
@@ -499,7 +499,7 @@ static void namedVariable(Token name, bool canAssign) {
         getOp = OP_GET_UPVALUE;
         setOp = OP_SET_UPVALUE;
     } else {
-        arg = identifierConstant(&name);
+        arg = createGlobalVariable(&name);
         getOp = OP_GET_GLOBAL;
         setOp = OP_SET_GLOBAL;
     }
@@ -566,6 +566,18 @@ static void binary(bool canAssign) {
 static void call(bool canAssign) {
     uint8_t argCount = argumentList();
     emitBytes(OP_CALL, argCount);
+}
+
+static void dot(bool canAssign) {
+    consume(TOKEN_IDENTIFIER, "Expected property name after '.'.");
+    int name = addConstant(currentChunk(), OBJ_VAL(makeString(parser.previous.start, parser.previous.length, true)));
+
+    if (canAssign && match(TOKEN_EQUAL)) {
+        expression();
+        emitLong(OP_SET_PROPERTY, name);
+    } else {
+        emitLong(OP_GET_PROPERTY, name);
+    }
 }
 
 static void literal(bool canAssign) {
@@ -978,8 +990,24 @@ static void switchStatement() {
     endScope();
 }
 
+static void classDeclaration() {
+    consume(TOKEN_IDENTIFIER, "Expected class name.");
+    int nameConstant = addConstant(currentChunk(),
+                                   OBJ_VAL(makeString(parser.previous.start, parser.previous.length, true)));
+    int classIdentifier = createGlobalVariable(&parser.previous);
+
+    declareVariable();
+    emitLong(OP_CLASS, nameConstant);
+    defineVariable(classIdentifier, parser.previous, false);
+
+    consume(TOKEN_LEFT_BRACE, "Expected '{' before class body.");
+    consume(TOKEN_RIGHT_BRACE, "Expected '}' after class body.");
+}
+
 static void declaration() {
-    if (match(TOKEN_FUN)) {
+    if (match(TOKEN_CLASS)) {
+        classDeclaration();
+    } else if (match(TOKEN_FUN)) {
         funDeclaration();
     } else if (match(TOKEN_VAR) || match(TOKEN_CONST)) {
         varDeclaration(parser.previous.type == TOKEN_CONST);
@@ -1024,7 +1052,7 @@ ParseRule rules[] = {
         [TOKEN_LEFT_BRACE]    = {NULL, NULL, PREC_NONE},
         [TOKEN_RIGHT_BRACE]   = {NULL, NULL, PREC_NONE},
         [TOKEN_COMMA]         = {NULL, NULL, PREC_NONE},
-        [TOKEN_DOT]           = {NULL, NULL, PREC_NONE},
+        [TOKEN_DOT]           = {NULL, dot, PREC_CALL},
         [TOKEN_MINUS]         = {unary, binary, PREC_TERM},
         [TOKEN_PLUS]          = {NULL, binary, PREC_TERM},
         [TOKEN_SEMICOLON]     = {NULL, NULL, PREC_NONE},

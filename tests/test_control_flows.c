@@ -1,6 +1,5 @@
 #include "common.h"
 #include "unity.h"
-#include "../src/compiler.h"
 
 void testIfStatement() {
     const char *program1 = "var num = 32;"

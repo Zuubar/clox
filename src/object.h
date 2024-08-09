@@ -2,8 +2,9 @@
 #define CLOX_OBJ_H
 
 #include "common.h"
-#include "value.h"
 #include "chunk.h"
+#include "table.h"
+#include "value.h"
 
 #define OBJ_TYPE(value)     (AS_OBJ(value)->type)
 #define IS_STRING(value)    (isObjType(value, OBJ_STRING))
@@ -11,6 +12,8 @@
 #define IS_NATIVE(value)    (isObjType(value, OBJ_NATIVE))
 #define IS_CLOSURE(value)   (isObjType(value, OBJ_CLOSURE))
 #define IS_UPVALUE(value)   (isObjType(value, OBJ_UPVALUE))
+#define IS_CLASS(value)     (isObjType(value, OBJ_CLASS))
+#define IS_INSTANCE(value)  (isObjType(value, OBJ_INSTANCE))
 
 #define AS_STRING(value)        ((ObjString*)AS_OBJ(value))
 #define AS_CSTRING(objString)   (objString->referenced != NULL ? objString->referenced : objString->chars)
@@ -18,6 +21,8 @@
 #define AS_NATIVE(value)        (((ObjNative*)AS_OBJ(value)))
 #define AS_CLOSURE(value)       (((ObjClosure*)AS_OBJ(value)))
 #define AS_UPVALUE(value)       (((ObjUpvalue*)AS_OBJ(value)))
+#define AS_CLASS(value)         (((ObjClass*)AS_OBJ(value)))
+#define AS_INSTANCE(value)      (((ObjInstance*)AS_OBJ(value)))
 #define FREE_STRING(objString)  (reallocate(objString, sizeof(ObjString) + ((objString)->referenced != NULL ? 0 : sizeof(char[(objString)->length + 1])), 0))
 
 
@@ -27,6 +32,8 @@ typedef enum {
     OBJ_CLOSURE,
     OBJ_NATIVE,
     OBJ_UPVALUE,
+    OBJ_CLASS,
+    OBJ_INSTANCE,
 } ObjType;
 
 struct Obj {
@@ -62,8 +69,19 @@ typedef struct {
     Obj obj;
     ObjFunction *function;
     int upvalueCount;
-    ObjUpvalue** upvalues;
+    ObjUpvalue **upvalues;
 } ObjClosure;
+
+typedef struct {
+    Obj obj;
+    ObjString *name;
+} ObjClass;
+
+typedef struct {
+    Obj obj;
+    ObjClass *klass;
+    Table fields;
+} ObjInstance;
 
 typedef Value (*NativeFn)(int argCount, Value *args);
 
@@ -86,6 +104,10 @@ ObjNative *newNative(NativeFn function, int arity);
 ObjClosure *newClosure(ObjFunction *function);
 
 ObjUpvalue *newUpvalue(Value *slot);
+
+ObjClass *newClass(ObjString *name);
+
+ObjInstance *newInstance(ObjClass *klass);
 
 void printObject(Value value);
 

@@ -97,6 +97,19 @@ ObjClosure *newClosure(ObjFunction *function) {
     return closure;
 }
 
+ObjClass *newClass(ObjString *name) {
+    ObjClass *klass = ALLOCATE_OBJ(ObjClass, OBJ_CLASS);
+    klass->name = name;
+    return klass;
+}
+
+ObjInstance *newInstance(ObjClass *klass) {
+    ObjInstance *instance = ALLOCATE_OBJ(ObjInstance, OBJ_INSTANCE);
+    instance->klass = klass;
+    initTable(&instance->fields, VAL_OBJ);
+    return instance;
+}
+
 ObjUpvalue *newUpvalue(Value *value) {
     ObjUpvalue *upvalue = ALLOCATE_OBJ(ObjUpvalue, OBJ_UPVALUE);
     upvalue->location = value;
@@ -136,6 +149,16 @@ void printObject(Value value) {
         case OBJ_UPVALUE:
             printf("upvalue");
             break;
+        case OBJ_CLASS: {
+            ObjString *className = AS_CLASS(value)->name;
+            printf("%.*s", className->length, AS_CSTRING(className));
+            break;
+        }
+        case OBJ_INSTANCE: {
+            ObjString *className = AS_INSTANCE(value)->klass->name;
+            printf("%.*s instance", className->length, AS_CSTRING(className));
+            break;
+        }
         default:
             printf("Unknown object.");
             break;
