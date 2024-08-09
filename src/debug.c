@@ -22,18 +22,8 @@ inline static int simpleInstruction(const char *name, int offset) {
     return offset + 1;
 }
 
-inline static int constantInstruction(Chunk *chunk, int offset) {
-    uint32_t operand = chunk->code[offset + 1] |
-                       (chunk->code[offset + 2] << 8) |
-                       (chunk->code[offset + 3] << 16);
-    printf("%-16s %4d '", "OP_CONSTANT", operand);
-    printValue(chunk->constants.values[operand]);
-    printf("'\n");
-    return offset + 4;
-}
-
 inline static int byteInstruction(const char *name, Chunk *chunk,
-                           int offset) {
+                                  int offset) {
     uint8_t slot = chunk->code[offset + 1];
     printf("%-16s %4d\n", name, slot);
     return offset + 2;
@@ -44,6 +34,24 @@ inline static int shortInstruction(const char *name, Chunk *chunk, int offset) {
                        (chunk->code[offset + 2] << 8);
     printf("%-16s %4d\n", name, operand);
     return offset + 3;
+}
+
+inline static int longInstruction(const char *name, Chunk *chunk, int offset) {
+    uint32_t operand = chunk->code[offset + 1] |
+                       (chunk->code[offset + 2] << 8) |
+                       (chunk->code[offset + 3] << 16);
+    printf("%-16s %4d\n", name, operand);
+    return offset + 4;
+}
+
+inline static int constantInstruction(Chunk *chunk, int offset) {
+    uint32_t operand = chunk->code[offset + 1] |
+                       (chunk->code[offset + 2] << 8) |
+                       (chunk->code[offset + 3] << 16);
+    printf("%-16s %4d '", "OP_CONSTANT", operand);
+    printValue(chunk->constants.values[operand]);
+    printf("'\n");
+    return offset + 4;
 }
 
 inline static int jumpInstruction(const char *name, int sign, Chunk *chunk, int offset) {
@@ -94,6 +102,10 @@ int disassembleInstruction(Chunk *chunk, int offset) {
             return shortInstruction("OP_GET_UPVALUE", chunk, offset);
         case OP_SET_UPVALUE:
             return shortInstruction("OP_SET_UPVALUE", chunk, offset);
+        case OP_GET_PROPERTY:
+            return longInstruction("OP_GET_PROPERTY", chunk, offset);
+        case OP_SET_PROPERTY:
+            return longInstruction("OP_SET_PROPERTY", chunk, offset);
         case OP_EQUAL:
             return simpleInstruction("OP_EQUAL", offset);
         case OP_GREATER:
@@ -145,6 +157,8 @@ int disassembleInstruction(Chunk *chunk, int offset) {
             return simpleInstruction("OP_CLOSE_UPVALUE", offset);
         case OP_RETURN:
             return simpleInstruction("OP_RETURN", offset);
+        case OP_CLASS:
+            return longInstruction("OP_CLASS", chunk, offset);
         default:
             printf("Unknown opcode %d\n", instruction);
             exit(1);
