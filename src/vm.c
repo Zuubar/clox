@@ -190,6 +190,10 @@ void initVM() {
     vm.grayStack = NULL;
 
     initTable(&vm.strings, VAL_OBJ);
+
+    vm.initString = NULL;
+    vm.initString = makeString("init", 4, false);
+
     initBuffer(&buffer);
 
     defineNative("clock", clockNative, 0);
@@ -203,6 +207,7 @@ void initVM() {
 void freeVM() {
     freeTable(&vm.strings);
     freeBuffer(&buffer);
+    vm.initString = NULL;
     freeObjects();
 }
 
@@ -267,7 +272,21 @@ static bool callValue(Value callee, int argCount) {
             case OBJ_CLASS: {
                 ObjClass *klass = AS_CLASS(callee);
                 vm.stackTop[-argCount - 1] = OBJ_VAL(newInstance(klass));
+
+                if (!IS_NIL(klass->initializer)) {
+                    return call(AS_CLOSURE(klass->initializer), argCount);
+                }
+
+                if (argCount != 0) {
+                    runtimeError("Expected 0 arguments but got %d.", argCount);
+                    return false;
+                }
                 return true;
+            }
+            case OBJ_BOUND_METHOD: {
+                ObjBoundMethod *bound = AS_BOUND_METHOD(callee);
+                vm.stackTop[-argCount - 1] = bound->receiver;
+                return call(bound->method, argCount);
             }
             default:
                 break;
@@ -276,6 +295,47 @@ static bool callValue(Value callee, int argCount) {
 
     runtimeError("Can only call functions and classes.");
     return false;
+}
+
+static bool invokeFromClass(ObjClass *klass, ObjString *name, uint8_t arcCount) {
+    Value method;
+    if (!tableGet(&klass->methods, OBJ_VAL(name), &method)) {
+        runtimeError("Undefined property '%s'.", name->chars);
+        return false;
+    }
+    return call(AS_CLOSURE(method), arcCount);
+}
+
+static bool invoke(ObjString *name, int argCount) {
+    Value receiver = peek(argCount);
+
+    if (!IS_INSTANCE(receiver)) {
+        runtimeError("Only instances have methods.");
+        return false;
+    }
+
+    ObjInstance *instance = AS_INSTANCE(receiver);
+
+    Value value;
+    if (tableGet(&instance->fields, OBJ_VAL(name), &value)) {
+        vm.stackTop[-argCount - 1] = value;
+        return callValue(value, argCount);
+    }
+
+    return invokeFromClass(instance->klass, name, argCount);
+}
+
+static bool bindMethod(ObjClass *klass, ObjString *name) {
+    Value method;
+    if (!tableGet(&klass->methods, OBJ_VAL(name), &method)) {
+        return false;
+    }
+
+    ObjBoundMethod *bound = newBoundMethod(peek(0), AS_CLOSURE(method));
+
+    pop(1);
+    push(OBJ_VAL(bound));
+    return true;
 }
 
 static ObjUpvalue *captureUpvalue(Value *local) {
@@ -311,6 +371,22 @@ static void closeUpvalues(Value *last) {
     }
 }
 
+static bool defineMethod(ObjString *name) {
+    Value method = peek(0);
+    ObjClass *klass = AS_CLASS(peek(1));
+    tableSet(&klass->methods, OBJ_VAL(name), method);
+
+    if (name == vm.initString) {
+        if (!IS_NIL(klass->initializer)) {
+            return false;
+        }
+
+        klass->initializer = method;
+    }
+    pop(1);
+    return true;
+}
+
 static bool isFalsey(Value value) {
     return IS_NIL(value) || (IS_BOOL(value) && !AS_BOOL(value));
 }
@@ -343,7 +419,7 @@ static InterpretResult run() {
     CallFrame *frame = &vm.frames[vm.frameCount - 1];
     register uint8_t *ip = frame->ip;
 
-#define READ_BYTE() (*(ip++))
+#define READ_BYTE() (*ip++)
 #define READ_SHORT() ({ \
     uint8_t byte1 = READ_BYTE(); \
     uint8_t byte2 = READ_BYTE(); \
@@ -459,6 +535,7 @@ static InterpretResult run() {
             }
             case OP_GET_PROPERTY: {
                 if (!IS_INSTANCE(peek(0))) {
+                    frame->ip = ip;
                     runtimeError("Only instances have properties.");
                     return INTERPRET_RUNTIME_ERROR;
                 }
@@ -472,11 +549,16 @@ static InterpretResult run() {
                     break;
                 }
 
-                runtimeError("Undefined property '%.*s'.", name->length, AS_CSTRING(name));
-                return INTERPRET_RUNTIME_ERROR;
+                if (!bindMethod(instance->klass, name)) {
+                    frame->ip = ip;
+                    runtimeError("Undefined property '%.*s'.", name->length, AS_CSTRING(name));
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                break;
             }
             case OP_SET_PROPERTY: {
                 if (!IS_INSTANCE(peek(1))) {
+                    frame->ip = ip;
                     runtimeError("Only instances have fields.");
                     return INTERPRET_RUNTIME_ERROR;
                 }
@@ -565,6 +647,17 @@ static InterpretResult run() {
                 ip = frame->ip;
                 break;
             }
+            case OP_INVOKE: {
+                ObjString *method = AS_STRING(READ_CONSTANT());
+                int argCount = READ_BYTE();
+                frame->ip = ip;
+                if (!invoke(method, argCount)) {
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                frame = &vm.frames[vm.frameCount - 1];
+                ip = frame->ip;
+                break;
+            }
             case OP_CLOSURE: {
                 ObjFunction *function = AS_FUNCTION(READ_CONSTANT());
                 ObjClosure *closure = newClosure(function);
@@ -600,6 +693,13 @@ static InterpretResult run() {
                 push(OBJ_VAL(newClass(AS_STRING(READ_CONSTANT()))));
                 break;
             }
+            case OP_METHOD:
+                if (!defineMethod(AS_STRING(READ_CONSTANT()))) {
+                    frame->ip = ip;
+                    runtimeError("class initializer redeclared");
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                break;
         }
     }
 

@@ -53,6 +53,8 @@ typedef struct {
 
 typedef enum {
     TYPE_FUNCTION,
+    TYPE_METHOD,
+    TYPE_INITIALIZER,
     TYPE_SCRIPT,
 } FunctionType;
 
@@ -82,8 +84,13 @@ typedef struct Compiler {
     } SwitchBreak;
 } Compiler;
 
+typedef struct ClassCompiler {
+    struct ClassCompiler *enclosing;
+} ClassCompiler;
+
 Parser parser;
 Compiler *current = NULL;
+ClassCompiler *currentClass = NULL;
 
 #define PATCH_BREAK(breakType) \
     do {                       \
@@ -232,7 +239,11 @@ static void emitLoop(int loopStart) {
 }
 
 static void emitReturn() {
-    emitByte(OP_NIL);
+    if (current->type == TYPE_INITIALIZER) {
+        emitShort(OP_GET_LOCAL, 0);
+    } else {
+        emitByte(OP_NIL);
+    }
     emitByte(OP_RETURN);
 }
 
@@ -290,10 +301,16 @@ static void initCompiler(Compiler *compiler, FunctionType type) {
 
     Local *local = &current->locals[current->localCount++];
     local->depth = 0;
-    local->name.start = "";
-    local->name.length = 0;
     local->isConst = false;
     local->isCaptured = false;
+
+    if (type != TYPE_FUNCTION) {
+        local->name.start = "this";
+        local->name.length = 4;
+    } else {
+        local->name.start = "";
+        local->name.length = 0;
+    }
 }
 
 static ObjFunction *endCompiler() {
@@ -328,7 +345,7 @@ static void endScope() {
     }
 }
 
-static int createGlobalVariable(Token *name) {
+static int globalVariable(Token *name) {
     Value variable = OBJ_VAL(makeString(name->start, name->length, true));
     Value identifier;
 
@@ -448,7 +465,7 @@ static uint32_t parseVariable(const char *errorMessage) {
     if (current->scopeDepth > 0) {
         return 0;
     }
-    return createGlobalVariable(&parser.previous);
+    return globalVariable(&parser.previous);
 }
 
 static void markInitialized(bool isConst) {
@@ -499,7 +516,7 @@ static void namedVariable(Token name, bool canAssign) {
         getOp = OP_GET_UPVALUE;
         setOp = OP_SET_UPVALUE;
     } else {
-        arg = createGlobalVariable(&name);
+        arg = globalVariable(&name);
         getOp = OP_GET_GLOBAL;
         setOp = OP_SET_GLOBAL;
     }
@@ -575,6 +592,10 @@ static void dot(bool canAssign) {
     if (canAssign && match(TOKEN_EQUAL)) {
         expression();
         emitLong(OP_SET_PROPERTY, name);
+    } else if (match(TOKEN_LEFT_PAREN)) {
+        uint8_t argCount = argumentList();
+        emitLong(OP_INVOKE, name);
+        emitByte(argCount);
     } else {
         emitLong(OP_GET_PROPERTY, name);
     }
@@ -632,6 +653,14 @@ static void string(bool canAssign) {
 
 static void variable(bool canAssign) {
     namedVariable(parser.previous, canAssign);
+}
+
+static void this_(bool canAssign) {
+    if (currentClass == NULL) {
+        error("Can't use 'this' outside of a class.");
+        return;
+    }
+    variable(false);
 }
 
 static void unary(bool canAssign) {
@@ -770,6 +799,10 @@ static void returnStatement() {
     if (match(TOKEN_SEMICOLON)) {
         emitReturn();
     } else {
+        if (current->type == TYPE_INITIALIZER) {
+            error("Can't return a value from an initializer.");
+        }
+
         expression();
         consume(TOKEN_SEMICOLON, "Expected ';' after return value.");
         emitByte(OP_RETURN);
@@ -990,18 +1023,44 @@ static void switchStatement() {
     endScope();
 }
 
+static void method() {
+    consume(TOKEN_IDENTIFIER, "Expected method name");
+    int constant = addConstant(currentChunk(),
+                               OBJ_VAL(makeString(parser.previous.start, parser.previous.length, true)));
+    FunctionType type = TYPE_METHOD;
+    if (parser.previous.length == 4 && memcmp(parser.previous.start, "init", 4) == 0) {
+        type = TYPE_INITIALIZER;
+    }
+    function(type);
+    emitLong(OP_METHOD, constant);
+}
+
 static void classDeclaration() {
     consume(TOKEN_IDENTIFIER, "Expected class name.");
     int nameConstant = addConstant(currentChunk(),
                                    OBJ_VAL(makeString(parser.previous.start, parser.previous.length, true)));
-    int classIdentifier = createGlobalVariable(&parser.previous);
+    int classIdentifier = globalVariable(&parser.previous);
+
+    Token className = parser.previous;
 
     declareVariable();
     emitLong(OP_CLASS, nameConstant);
     defineVariable(classIdentifier, parser.previous, false);
 
+    ClassCompiler classCompiler;
+    classCompiler.enclosing = currentClass;
+    currentClass = &classCompiler;
+
+    namedVariable(className, false);
     consume(TOKEN_LEFT_BRACE, "Expected '{' before class body.");
+    while (!check(TOKEN_RIGHT_BRACE) && !check(TOKEN_EOF)) {
+        method();
+    }
     consume(TOKEN_RIGHT_BRACE, "Expected '}' after class body.");
+
+    emitByte(OP_POP);
+
+    currentClass = currentClass->enclosing;
 }
 
 static void declaration() {
@@ -1084,7 +1143,7 @@ ParseRule rules[] = {
         [TOKEN_PRINT]         = {NULL, NULL, PREC_NONE},
         [TOKEN_RETURN]        = {NULL, NULL, PREC_NONE},
         [TOKEN_SUPER]         = {NULL, NULL, PREC_NONE},
-        [TOKEN_THIS]          = {NULL, NULL, PREC_NONE},
+        [TOKEN_THIS]          = {this_, NULL, PREC_NONE},
         [TOKEN_TRUE]          = {literal, NULL, PREC_NONE},
         [TOKEN_VAR]           = {NULL, NULL, PREC_NONE},
         [TOKEN_CONST]         = {NULL, NULL, PREC_NONE},

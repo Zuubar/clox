@@ -100,6 +100,8 @@ ObjClosure *newClosure(ObjFunction *function) {
 ObjClass *newClass(ObjString *name) {
     ObjClass *klass = ALLOCATE_OBJ(ObjClass, OBJ_CLASS);
     klass->name = name;
+    klass->initializer = NIL_VAL;
+    initTable(&klass->methods, VAL_OBJ);
     return klass;
 }
 
@@ -108,6 +110,13 @@ ObjInstance *newInstance(ObjClass *klass) {
     instance->klass = klass;
     initTable(&instance->fields, VAL_OBJ);
     return instance;
+}
+
+ObjBoundMethod *newBoundMethod(Value receiver, ObjClosure *method) {
+    ObjBoundMethod *bound = ALLOCATE_OBJ(ObjBoundMethod, OBJ_BOUND_METHOD);
+    bound->receiver = receiver;
+    bound->method = method;
+    return bound;
 }
 
 ObjUpvalue *newUpvalue(Value *value) {
@@ -130,10 +139,7 @@ void printObject(Value value) {
     switch (OBJ_TYPE(value)) {
         case OBJ_STRING: {
             ObjString *strObj = AS_STRING(value);
-            const char *str = AS_CSTRING(strObj);
-            for (int i = 0; i < strObj->length; i++) {
-                printf("%c", str[i]);
-            }
+            printf("%.*s", strObj->length, AS_CSTRING(strObj));
             break;
         }
         case OBJ_FUNCTION: {
@@ -159,6 +165,9 @@ void printObject(Value value) {
             printf("%.*s instance", className->length, AS_CSTRING(className));
             break;
         }
+        case OBJ_BOUND_METHOD:
+            printFunction(AS_BOUND_METHOD(value)->method->function);
+            break;
         default:
             printf("Unknown object.");
             break;
