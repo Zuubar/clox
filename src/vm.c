@@ -570,6 +570,17 @@ static InterpretResult run() {
                 push(value);
                 break;
             }
+            case OP_GET_SUPER: {
+                ObjString *name = AS_STRING(READ_CONSTANT());
+                ObjClass *superclass = AS_CLASS(pop(1));
+
+                if (!bindMethod(superclass, name)) {
+                    frame->ip = ip;
+                    runtimeError("Undefined super property '%.*s'.", name->length, AS_CSTRING(name));
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                break;
+            }
             case OP_EQUAL: {
                 Value b = pop(1);
                 Value a = pop(1);
@@ -658,6 +669,18 @@ static InterpretResult run() {
                 ip = frame->ip;
                 break;
             }
+            case OP_INVOKE_SUPER: {
+                ObjString *method = AS_STRING(READ_CONSTANT());
+                int argCount = READ_BYTE();
+                ObjClass *superclass = AS_CLASS(pop(1));
+                frame->ip = ip;
+                if (!invokeFromClass(superclass, method, argCount)) {
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                frame = &vm.frames[vm.frameCount - 1];
+                ip = frame->ip;
+                break;
+            }
             case OP_CLOSURE: {
                 ObjFunction *function = AS_FUNCTION(READ_CONSTANT());
                 ObjClosure *closure = newClosure(function);
@@ -687,6 +710,20 @@ static InterpretResult run() {
                 push(result);
                 frame = &vm.frames[vm.frameCount - 1];
                 ip = frame->ip;
+                break;
+            }
+            case OP_INHERIT: {
+                Value superclass = peek(1);
+
+                if (!IS_CLASS(superclass)) {
+                    frame->ip = ip;
+                    runtimeError("Superclass must be a class.");
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+
+                ObjClass *subclass = AS_CLASS(peek(0));
+                tableAddAll(&AS_CLASS(superclass)->methods, &subclass->methods);
+                pop(1);
                 break;
             }
             case OP_CLASS: {

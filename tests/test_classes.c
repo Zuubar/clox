@@ -57,11 +57,23 @@ void testClassFields() {
                            "print rectangle.area();"
                            "print square.area();";
 
+    const char *program5 = "class Oops {"
+                           "  init() {"
+                           "    fun f() {"
+                           "      print \"not a method\";"
+                           "    }"
+                           "    this.field = f;"
+                           "  }"
+                           "}"
+                           "var oops = Oops();"
+                           "oops.field();";
+
     const char *cases[][2] = {
             {program1, "3\n"},
             {program2, "3\n"},
             {program3, "6\n"},
             {program4, "56\n81\n"},
+            {program5, "not a method\n"},
     };
     TEST_PROGRAMS(cases);
 }
@@ -148,6 +160,60 @@ void testClassMethod() {
     TEST_PROGRAMS(cases);
 }
 
+void testClassInheritance() {
+    const char *program1 =
+            "class Doughnut {"
+            "   cook() {"
+            "       print \"Fry until golden brown.\";"
+            "   }"
+            "}"
+            "class BostonCream < Doughnut {"
+            "   cook() {"
+            "       super.cook();"
+            "       print \"Pipe full of custard and coat with chocolate.\";"
+            "   }"
+            "}"
+            "BostonCream().cook();";
+
+    const char *program2 =
+            "class Car {"
+            "   init(name, cc, weight) {"
+            "       this.name = name;"
+            "       this.cc = cc;"
+            "       this.weight = weight;"
+            "   }"
+            "   wheels() {"
+            "       return 4;"
+            "   }"
+            "   description() {"
+            "       return \"{\" + this.name + \", \" + str(this.cc) + \", \" + str(this.weight) + \", \" + str(this.wheels()) + \"}\";"
+            "   }"
+            "}"
+            "class Semi < Car {"
+            "   init(name, cc, weight, auxiliary_wheels) {"
+            "       super.init(name, cc, weight);"
+            "       this.auxiliary_wheels = auxiliary_wheels;"
+            "   }"
+            "   wheels() {"
+            "       return super.wheels() + this.auxiliary_wheels;"
+            "   }"
+            "   description() {"
+            "       return \"Base car: \" + super.description() + \" with base \" + str(super.wheels()) + \" + \" + str(this.auxiliary_wheels) + \" wheels\";"
+            "   }"
+            "}"
+            "var supra = Car(\"Toyota supra\", 2997, 1615);"
+            "print supra.description();"
+            "var scania = Semi(\"Scania S\", 16000, 9705, 6);"
+            "print scania.description();"
+            "print scania.wheels();";
+
+    const char *cases[][2] = {
+            {program1, "Fry until golden brown.\nPipe full of custard and coat with chocolate.\n"},
+            {program2, "{Toyota supra, 2997, 1615, 4}\nBase car: {Scania S, 16000, 9705, 10} with base 4 + 6 wheels\n10\n"},
+    };
+    TEST_PROGRAMS(cases);
+}
+
 void setUp() {
 
 }
@@ -162,5 +228,6 @@ int main() {
     RUN_TEST(testClassFields);
     RUN_TEST(testClassThis);
     RUN_TEST(testClassMethod);
+    RUN_TEST(testClassInheritance);
     return UNITY_END();
 }

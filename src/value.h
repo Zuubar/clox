@@ -61,8 +61,11 @@ typedef struct {
                 }               \
                 break;          \
             }                   \
+            default:            \
+                printf("Unsupported table key type.");                   \
+                exit(1);        \
         }                       \
-    } while(false)
+    } while(false)              \
 
 
 typedef struct {
