@@ -19,7 +19,7 @@
 typedef enum {
     PREC_NONE,
     PREC_ASSIGNMENT,  // =
-    PREC_CONDITIONAL,     // ?:
+    PREC_CONDITIONAL, // ?:
     PREC_OR,          // or
     PREC_AND,         // and
     PREC_EQUALITY,    // == !=
@@ -53,6 +53,8 @@ typedef struct {
 
 typedef enum {
     TYPE_FUNCTION,
+    TYPE_METHOD,
+    TYPE_INITIALIZER,
     TYPE_SCRIPT,
 } FunctionType;
 
@@ -82,8 +84,14 @@ typedef struct Compiler {
     } SwitchBreak;
 } Compiler;
 
+typedef struct ClassCompiler {
+    struct ClassCompiler *enclosing;
+    bool hasSuperclass;
+} ClassCompiler;
+
 Parser parser;
 Compiler *current = NULL;
+ClassCompiler *currentClass = NULL;
 
 #define PATCH_BREAK(breakType) \
     do {                       \
@@ -232,7 +240,11 @@ static void emitLoop(int loopStart) {
 }
 
 static void emitReturn() {
-    emitByte(OP_NIL);
+    if (current->type == TYPE_INITIALIZER) {
+        emitShort(OP_GET_LOCAL, 0);
+    } else {
+        emitByte(OP_NIL);
+    }
     emitByte(OP_RETURN);
 }
 
@@ -290,10 +302,16 @@ static void initCompiler(Compiler *compiler, FunctionType type) {
 
     Local *local = &current->locals[current->localCount++];
     local->depth = 0;
-    local->name.start = "";
-    local->name.length = 0;
     local->isConst = false;
     local->isCaptured = false;
+
+    if (type != TYPE_FUNCTION) {
+        local->name.start = "this";
+        local->name.length = 4;
+    } else {
+        local->name.start = "";
+        local->name.length = 0;
+    }
 }
 
 static ObjFunction *endCompiler() {
@@ -328,15 +346,15 @@ static void endScope() {
     }
 }
 
-static int identifierConstant(Token *name) {
-    Value variable = OBJ_VAL(makeString(name->start, name->length, true));
+static int globalVariable(Token *name) {
+    ObjString* variable = makeString(name->start, name->length, true);
     Value identifier;
 
     if (tableGet(&buffer.globalVarIdentifiers, variable, &identifier)) {
         return AS_NUMBER(identifier);
     }
 
-    int newIdentifier = makeConstant(variable);
+    int newIdentifier = makeConstant(OBJ_VAL(variable));
     tableSet(&buffer.globalVarIdentifiers, variable, NUMBER_VAL(newIdentifier));
     return newIdentifier;
 }
@@ -448,7 +466,7 @@ static uint32_t parseVariable(const char *errorMessage) {
     if (current->scopeDepth > 0) {
         return 0;
     }
-    return identifierConstant(&parser.previous);
+    return globalVariable(&parser.previous);
 }
 
 static void markInitialized(bool isConst) {
@@ -467,7 +485,7 @@ static void defineVariable(uint32_t global, Token name, bool isConst) {
     }
 
     if (isConst) {
-        tableSet(&buffer.constVarIdentifiers, OBJ_VAL(makeString(name.start, name.length, true)), BOOL_VAL(true));
+        tableSet(&buffer.constVarIdentifiers, makeString(name.start, name.length, true), BOOL_VAL(true));
     }
 
     emitShort(OP_DEFINE_GLOBAL, global);
@@ -499,14 +517,14 @@ static void namedVariable(Token name, bool canAssign) {
         getOp = OP_GET_UPVALUE;
         setOp = OP_SET_UPVALUE;
     } else {
-        arg = identifierConstant(&name);
+        arg = globalVariable(&name);
         getOp = OP_GET_GLOBAL;
         setOp = OP_SET_GLOBAL;
     }
 
     if (canAssign && match(TOKEN_EQUAL)) {
         Value val;
-        if ((tableGet(&buffer.constVarIdentifiers, OBJ_VAL(makeString(name.start, name.length, true)), &val)) ||
+        if ((tableGet(&buffer.constVarIdentifiers, makeString(name.start, name.length, true), &val)) ||
             (arg != -1 && setOp != OP_SET_GLOBAL && current->locals[arg].isConst)) {
             error("Cannot assign to a constant variable.");
             return;
@@ -568,6 +586,22 @@ static void call(bool canAssign) {
     emitBytes(OP_CALL, argCount);
 }
 
+static void dot(bool canAssign) {
+    consume(TOKEN_IDENTIFIER, "Expected property name after '.'.");
+    int name = addConstant(currentChunk(), OBJ_VAL(makeString(parser.previous.start, parser.previous.length, true)));
+
+    if (canAssign && match(TOKEN_EQUAL)) {
+        expression();
+        emitLong(OP_SET_PROPERTY, name);
+    } else if (match(TOKEN_LEFT_PAREN)) {
+        uint8_t argCount = argumentList();
+        emitLong(OP_INVOKE, name);
+        emitByte(argCount);
+    } else {
+        emitLong(OP_GET_PROPERTY, name);
+    }
+}
+
 static void literal(bool canAssign) {
     switch (parser.previous.type) {
         case TOKEN_FALSE:
@@ -620,6 +654,45 @@ static void string(bool canAssign) {
 
 static void variable(bool canAssign) {
     namedVariable(parser.previous, canAssign);
+}
+
+static Token syntheticToken(const char *text) {
+    Token token;
+    token.start = text;
+    token.length = (int) strlen(text);
+    return token;
+}
+
+static void super_(bool canAssign) {
+    if (currentClass == NULL) {
+        error("Can't use 'super' outside of a class");
+    } else if (!currentClass->hasSuperclass) {
+        error("Can't use 'super' in a class with no superclass.");
+    }
+
+    consume(TOKEN_DOT, "Expected '.' after 'super'.");
+    consume(TOKEN_IDENTIFIER, "Expected superclass method name.");
+    int name = addConstant(currentChunk(), OBJ_VAL(makeString(parser.previous.start, parser.previous.length, true)));
+
+    namedVariable(syntheticToken("this"), false);
+
+    if (match(TOKEN_LEFT_PAREN)) {
+        uint8_t argumentCount = argumentList();
+        namedVariable(syntheticToken("super"), false);
+        emitLong(OP_INVOKE_SUPER, name);
+        emitByte(argumentCount);
+    } else {
+        namedVariable(syntheticToken("super"), false);
+        emitLong(OP_GET_SUPER, name);
+    }
+}
+
+static void this_(bool canAssign) {
+    if (currentClass == NULL) {
+        error("Can't use 'this' outside of a class.");
+        return;
+    }
+    variable(false);
 }
 
 static void unary(bool canAssign) {
@@ -758,6 +831,10 @@ static void returnStatement() {
     if (match(TOKEN_SEMICOLON)) {
         emitReturn();
     } else {
+        if (current->type == TYPE_INITIALIZER) {
+            error("Can't return a value from an initializer.");
+        }
+
         expression();
         consume(TOKEN_SEMICOLON, "Expected ';' after return value.");
         emitByte(OP_RETURN);
@@ -978,8 +1055,73 @@ static void switchStatement() {
     endScope();
 }
 
+static void method() {
+    consume(TOKEN_IDENTIFIER, "Expected method name");
+    int constant = addConstant(currentChunk(),
+                               OBJ_VAL(makeString(parser.previous.start, parser.previous.length, true)));
+    FunctionType type = TYPE_METHOD;
+    if (parser.previous.length == 4 && memcmp(parser.previous.start, "init", 4) == 0) {
+        type = TYPE_INITIALIZER;
+    }
+    function(type);
+    emitLong(OP_METHOD, constant);
+}
+
+static void classDeclaration() {
+    consume(TOKEN_IDENTIFIER, "Expected class name.");
+    int nameConstant = addConstant(currentChunk(),
+                                   OBJ_VAL(makeString(parser.previous.start, parser.previous.length, true)));
+    int classIdentifier = globalVariable(&parser.previous);
+
+    Token className = parser.previous;
+
+    declareVariable();
+    emitLong(OP_CLASS, nameConstant);
+    defineVariable(classIdentifier, parser.previous, false);
+
+    ClassCompiler classCompiler;
+    classCompiler.enclosing = currentClass;
+    classCompiler.hasSuperclass = false;
+    currentClass = &classCompiler;
+
+    if (match(TOKEN_LESS)) {
+        consume(TOKEN_IDENTIFIER, "Expected superclass name.");
+        variable(false);
+
+        if (identifiersEqual(&className, &parser.previous)) {
+            error("A class can't inherit from itself.");
+        }
+
+        beginScope();
+        Token super = syntheticToken("super");
+        addLocal(super);
+        defineVariable(0, super, false);
+
+        namedVariable(className, false);
+        emitByte(OP_INHERIT);
+        classCompiler.hasSuperclass = true;
+    }
+
+    namedVariable(className, false);
+    consume(TOKEN_LEFT_BRACE, "Expected '{' before class body.");
+    while (!check(TOKEN_RIGHT_BRACE) && !check(TOKEN_EOF)) {
+        method();
+    }
+    consume(TOKEN_RIGHT_BRACE, "Expected '}' after class body.");
+
+    emitByte(OP_POP);
+
+    if (classCompiler.hasSuperclass) {
+        endScope();
+    }
+
+    currentClass = currentClass->enclosing;
+}
+
 static void declaration() {
-    if (match(TOKEN_FUN)) {
+    if (match(TOKEN_CLASS)) {
+        classDeclaration();
+    } else if (match(TOKEN_FUN)) {
         funDeclaration();
     } else if (match(TOKEN_VAR) || match(TOKEN_CONST)) {
         varDeclaration(parser.previous.type == TOKEN_CONST);
@@ -1024,7 +1166,7 @@ ParseRule rules[] = {
         [TOKEN_LEFT_BRACE]    = {NULL, NULL, PREC_NONE},
         [TOKEN_RIGHT_BRACE]   = {NULL, NULL, PREC_NONE},
         [TOKEN_COMMA]         = {NULL, NULL, PREC_NONE},
-        [TOKEN_DOT]           = {NULL, NULL, PREC_NONE},
+        [TOKEN_DOT]           = {NULL, dot, PREC_CALL},
         [TOKEN_MINUS]         = {unary, binary, PREC_TERM},
         [TOKEN_PLUS]          = {NULL, binary, PREC_TERM},
         [TOKEN_SEMICOLON]     = {NULL, NULL, PREC_NONE},
@@ -1055,8 +1197,8 @@ ParseRule rules[] = {
         [TOKEN_OR]            = {NULL, or_, PREC_OR},
         [TOKEN_PRINT]         = {NULL, NULL, PREC_NONE},
         [TOKEN_RETURN]        = {NULL, NULL, PREC_NONE},
-        [TOKEN_SUPER]         = {NULL, NULL, PREC_NONE},
-        [TOKEN_THIS]          = {NULL, NULL, PREC_NONE},
+        [TOKEN_SUPER]         = {super_, NULL, PREC_NONE},
+        [TOKEN_THIS]          = {this_, NULL, PREC_NONE},
         [TOKEN_TRUE]          = {literal, NULL, PREC_NONE},
         [TOKEN_VAR]           = {NULL, NULL, PREC_NONE},
         [TOKEN_CONST]         = {NULL, NULL, PREC_NONE},

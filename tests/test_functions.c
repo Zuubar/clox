@@ -68,6 +68,11 @@ void testNativeStrFunction() {
                            "fun very_very_very_very_very_very_very_very_very_very_long_function() {"
                            "    return nil;"
                            "}"
+                           "class Doughnut {"
+                           "    cook() {"
+                           "        return \"Fry until golden brown.\" + \"Place in a nice box.\";"
+                           "    }"
+                           "}"
                            "print str(false);"
                            "print str(true);"
                            "print str(nil);"
@@ -76,11 +81,14 @@ void testNativeStrFunction() {
                            "print str(QDkwKxRmhgZhrwnMnOzjkgVHmfxVbboRVhawfCMQjcpVDFnAlNjuYBADQFX);"
                            "print str(str(str(very_very_very_very_very_very_very_very_very_very_long_function)));"
                            "print str(str(fib));"
-                           "print str(str(clock));";
+                           "print str(str(clock));"
+                           "print str(Doughnut);"
+                           "print str(Doughnut());"
+                           "print str(Doughnut().cook);";
 
     const char *cases[][2] = {
             {program1,
-             "false\ntrue\nnil\n128\n1e+124\n<fn QDkwKxRmhgZhrwnMnOzjkgVHmfxVbboRVhawfCMQjcpVDFnAlNjuYBADQFX\n<fn very_very_very_very_very_very_very_very_very_very_long_func\n<fn fib>\n<native fn>\n"},
+             "false\ntrue\nnil\n128\n1e+124\n<fn QDkwKxRmhgZhrwnMnOzjkgVHmfxVbboRVhawfCMQjcpVDFnAlNjuYBADQFX\n<fn very_very_very_very_very_very_very_very_very_very_long_func\n<fn fib>\n<native fn>\nDoughnut\nDoughnut instance\n<fn cook>\n"},
     };
     TEST_PROGRAMS(cases);
 }

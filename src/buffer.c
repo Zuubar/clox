@@ -2,9 +2,9 @@
 #include "memory.h"
 
 void initBuffer(Buffer *buff) {
-    initTable(&buff->globalVarIdentifiers, VAL_OBJ);
+    initTable(&buff->globalVarIdentifiers);
     initValueArray(&buff->globalVars);
-    initTable(&buff->constVarIdentifiers, VAL_OBJ);
+    initTable(&buff->constVarIdentifiers);
 }
 
 void freeBuffer(Buffer *buff) {

@@ -3,6 +3,7 @@
 #include <stdarg.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 #include "buffer.h"
 #include "common.h"
 #include "debug.h"
@@ -21,34 +22,55 @@ static Value clockNative(int argCount, Value *args) {
 
 static Value strNative(int argCount, Value *args) {
     Value value = args[0];
-    switch (value.type) {
-        case VAL_BOOL:
-            return OBJ_VAL(AS_BOOL(value) ? makeString("true", 4, false) : makeString("false", 5, false));
-        case VAL_NIL:
-            return OBJ_VAL(makeString("nil", 3, false));
-        case VAL_NUMBER: {
-            char buff[32];
-            int written = snprintf(buff, 32, "%g", AS_NUMBER(value));
-            return OBJ_VAL(makeString(buff, written > 31 ? 31 : written, false));
-        }
-        case VAL_OBJ:
-            switch (OBJ_TYPE(value)) {
-                case OBJ_STRING: {
-                    return value;
-                }
-                case OBJ_NATIVE:
-                    return OBJ_VAL(makeString("<native fn>", 11, false));
-                case OBJ_CLOSURE: {
-                    char buff[64];
-                    ObjFunction *function = AS_CLOSURE(value)->function;
-                    int written = snprintf(buff, 64, "<fn %.*s>", function->name->length, AS_CSTRING(function->name));
-                    return OBJ_VAL(makeString(buff, written > 63 ? 63 : written, false));
-                }
+    if (IS_BOOL(value)) {
+        return OBJ_VAL(AS_BOOL(value) ? makeString("true", 4, false) : makeString("false", 5, false));
+    } else if (IS_NIL(value)) {
+        return OBJ_VAL(makeString("nil", 3, false));
+    } else if (IS_NUMBER(value)) {
+        char buff[32];
+        int written = snprintf(buff, 32, "%g", AS_NUMBER(value));
+        return OBJ_VAL(makeString(buff, written > 31 ? 31 : written, false));
+    } else if (IS_OBJ(value)) {
+        switch (OBJ_TYPE(value)) {
+            case OBJ_STRING: {
+                return value;
             }
-        default:
-            runtimeError("Unsupported type.");
-            return UNDEFINED_VAL;
+            case OBJ_NATIVE:
+                return OBJ_VAL(makeString("<native fn>", 11, false));
+            case OBJ_CLOSURE: {
+                char buff[64];
+                ObjFunction *function = AS_CLOSURE(value)->function;
+                int written = snprintf(buff, 64, "<fn %.*s>", function->name->length, AS_CSTRING(function->name));
+                return OBJ_VAL(makeString(buff, written > 63 ? 63 : written, false));
+            }
+            case OBJ_FUNCTION:
+                break;
+            case OBJ_UPVALUE:
+                return OBJ_VAL(makeString("upvalue", 7, false));
+            case OBJ_CLASS: {
+                char buff[64];
+                ObjClass *klass = AS_CLASS(value);
+                int written = snprintf(buff, 64, "%.*s", klass->name->length, AS_CSTRING(klass->name));
+                return OBJ_VAL(makeString(buff, written > 63 ? 63 : written, false));
+            }
+            case OBJ_INSTANCE: {
+                char buff[64];
+                ObjInstance *instance = AS_INSTANCE(value);
+                int written = snprintf(buff, 64, "%.*s instance", instance->klass->name->length,
+                                       AS_CSTRING(instance->klass->name));
+                return OBJ_VAL(makeString(buff, written > 63 ? 63 : written, false));
+            }
+            case OBJ_BOUND_METHOD: {
+                char buff[64];
+                ObjBoundMethod *bound = AS_BOUND_METHOD(value);
+                int written = snprintf(buff, 64, "<fn %.*s>", bound->method->function->name->length,
+                                       AS_CSTRING(bound->method->function->name));
+                return OBJ_VAL(makeString(buff, written > 63 ? 63 : written, false));
+            }
+        }
     }
+    runtimeError("Unsupported type.");
+    return UNDEFINED_VAL;
 }
 
 static Value sqrtNative(int argCount, Value *args) {
@@ -58,6 +80,64 @@ static Value sqrtNative(int argCount, Value *args) {
     }
     return NUMBER_VAL(sqrt(AS_NUMBER(args[0])));
 }
+
+static Value getFieldNative(int argCount, Value *args) {
+    if (!IS_INSTANCE(args[0])) {
+        runtimeError("First argument should be a class instance.");
+        return UNDEFINED_VAL;
+    }
+
+    if (!IS_STRING(args[1])) {
+        runtimeError("Second argument should be a string.");
+        return UNDEFINED_VAL;
+    }
+
+    ObjInstance *instance = AS_INSTANCE(args[0]);
+    ObjString *name = AS_STRING(args[1]);
+    Value value;
+
+    if (!tableGet(&instance->fields, name, &value)) {
+        runtimeError("Undefined field '%.*s'.", name->length, AS_CSTRING(name));
+        return UNDEFINED_VAL;
+    }
+
+    return value;
+}
+
+static Value setFieldNative(int argCount, Value *args) {
+    if (!IS_INSTANCE(args[0])) {
+        runtimeError("First argument should be a class instance.");
+        return UNDEFINED_VAL;
+    }
+
+    if (!IS_STRING(args[1])) {
+        runtimeError("Second argument should be a string.");
+        return UNDEFINED_VAL;
+    }
+
+    ObjInstance *instance = AS_INSTANCE(args[0]);
+    tableSet(&instance->fields, AS_STRING(args[1]), args[2]);
+
+    return NIL_VAL;
+}
+
+static Value deleteFieldNative(int argCount, Value *args) {
+    if (!IS_INSTANCE(args[0])) {
+        runtimeError("First argument should be a class instance.");
+        return UNDEFINED_VAL;
+    }
+
+    if (!IS_STRING(args[1])) {
+        runtimeError("Second argument should be a string.");
+        return UNDEFINED_VAL;
+    }
+
+    ObjInstance *instance = AS_INSTANCE(args[0]);
+    tableDelete(&instance->fields, AS_STRING(args[1]));
+
+    return NIL_VAL;
+}
+
 
 static void resetStack() {
     vm.stackTop = &vm.stack[0];
@@ -98,7 +178,7 @@ static void defineNative(const char *name, NativeFn function, int arity) {
 
     writeValueArray(&buffer.globalVars, vm.stack[0]);
     writeValueArray(&buffer.globalVars, vm.stack[1]);
-    tableSet(&buffer.globalVarIdentifiers, vm.stack[0], NUMBER_VAL(buffer.globalVars.count - 1));
+    tableSet(&buffer.globalVarIdentifiers, AS_STRING(vm.stack[0]), NUMBER_VAL(buffer.globalVars.count - 1));
 
     pop(2);
 }
@@ -114,17 +194,25 @@ void initVM() {
     vm.grayCapacity = 0;
     vm.grayStack = NULL;
 
-    initTable(&vm.strings, VAL_OBJ);
+    initTable(&vm.strings);
+
+    vm.initString = NULL;
+    vm.initString = makeString("init", 4, false);
+
     initBuffer(&buffer);
 
     defineNative("clock", clockNative, 0);
     defineNative("str", strNative, 1);
     defineNative("sqrt", sqrtNative, 1);
+    defineNative("getField", getFieldNative, 2);
+    defineNative("setField", setFieldNative, 3);
+    defineNative("deleteField", deleteFieldNative, 2);
 }
 
 void freeVM() {
     freeTable(&vm.strings);
     freeBuffer(&buffer);
+    vm.initString = NULL;
     freeObjects();
 }
 
@@ -186,6 +274,25 @@ static bool callValue(Value callee, int argCount) {
                 push(result);
                 return true;
             }
+            case OBJ_CLASS: {
+                ObjClass *klass = AS_CLASS(callee);
+                vm.stackTop[-argCount - 1] = OBJ_VAL(newInstance(klass));
+
+                if (!IS_NIL(klass->initializer)) {
+                    return call(AS_CLOSURE(klass->initializer), argCount);
+                }
+
+                if (argCount != 0) {
+                    runtimeError("Expected 0 arguments but got %d.", argCount);
+                    return false;
+                }
+                return true;
+            }
+            case OBJ_BOUND_METHOD: {
+                ObjBoundMethod *bound = AS_BOUND_METHOD(callee);
+                vm.stackTop[-argCount - 1] = bound->receiver;
+                return call(bound->method, argCount);
+            }
             default:
                 break;
         }
@@ -193,6 +300,47 @@ static bool callValue(Value callee, int argCount) {
 
     runtimeError("Can only call functions and classes.");
     return false;
+}
+
+static bool invokeFromClass(ObjClass *klass, ObjString *name, uint8_t arcCount) {
+    Value method;
+    if (!tableGet(&klass->methods, name, &method)) {
+        runtimeError("Undefined property '%s'.", name->chars);
+        return false;
+    }
+    return call(AS_CLOSURE(method), arcCount);
+}
+
+static bool invoke(ObjString *name, int argCount) {
+    Value receiver = peek(argCount);
+
+    if (!IS_INSTANCE(receiver)) {
+        runtimeError("Only instances have methods.");
+        return false;
+    }
+
+    ObjInstance *instance = AS_INSTANCE(receiver);
+
+    Value value;
+    if (tableGet(&instance->fields, name, &value)) {
+        vm.stackTop[-argCount - 1] = value;
+        return callValue(value, argCount);
+    }
+
+    return invokeFromClass(instance->klass, name, argCount);
+}
+
+static bool bindMethod(ObjClass *klass, ObjString *name) {
+    Value method;
+    if (!tableGet(&klass->methods, name, &method)) {
+        return false;
+    }
+
+    ObjBoundMethod *bound = newBoundMethod(peek(0), AS_CLOSURE(method));
+
+    pop(1);
+    push(OBJ_VAL(bound));
+    return true;
 }
 
 static ObjUpvalue *captureUpvalue(Value *local) {
@@ -228,6 +376,22 @@ static void closeUpvalues(Value *last) {
     }
 }
 
+static bool defineMethod(ObjString *name) {
+    Value method = peek(0);
+    ObjClass *klass = AS_CLASS(peek(1));
+    tableSet(&klass->methods, name, method);
+
+    if (name == vm.initString) {
+        if (!IS_NIL(klass->initializer)) {
+            return false;
+        }
+
+        klass->initializer = method;
+    }
+    pop(1);
+    return true;
+}
+
 static bool isFalsey(Value value) {
     return IS_NIL(value) || (IS_BOOL(value) && !AS_BOOL(value));
 }
@@ -248,7 +412,7 @@ static void concatenate() {
         result = interned;
     } else {
         push(OBJ_VAL(result));
-        tableSet(&vm.strings, OBJ_VAL(result), NIL_VAL);
+        tableSet(&vm.strings, result, NIL_VAL);
         pop(1);
     }
 
@@ -260,7 +424,7 @@ static InterpretResult run() {
     CallFrame *frame = &vm.frames[vm.frameCount - 1];
     register uint8_t *ip = frame->ip;
 
-#define READ_BYTE() (*(ip++))
+#define READ_BYTE() (*ip++)
 #define READ_SHORT() ({ \
     uint8_t byte1 = READ_BYTE(); \
     uint8_t byte2 = READ_BYTE(); \
@@ -323,7 +487,7 @@ static InterpretResult run() {
             case OP_GET_GLOBAL: {
                 uint16_t variableIndex = READ_SHORT();
                 Value *globals = buffer.globalVars.values;
-                if (globals[variableIndex].type == VAL_UNDEFINED) {
+                if (IS_UNDEFINED(globals[variableIndex])) {
                     frame->ip = ip;
                     ObjString *varName = AS_STRING(globals[variableIndex - 1]);
                     runtimeError("Undefined variable '%.*s'.", varName->length, AS_CSTRING(varName));
@@ -338,7 +502,7 @@ static InterpretResult run() {
                 uint16_t variableIndex = READ_SHORT();
                 Value *globals = buffer.globalVars.values;
 
-                if (globals[variableIndex].type == VAL_UNDEFINED) {
+                if (IS_UNDEFINED(globals[variableIndex])) {
                     frame->ip = ip;
                     ObjString *varName = AS_STRING(globals[variableIndex - 1]);
                     runtimeError("Undefined variable '%.*s'.", varName->length, AS_CSTRING(varName));
@@ -372,6 +536,54 @@ static InterpretResult run() {
             case OP_SET_UPVALUE: {
                 uint16_t slot = READ_SHORT();
                 *frame->closure->upvalues[slot]->location = peek(0);
+                break;
+            }
+            case OP_GET_PROPERTY: {
+                if (!IS_INSTANCE(peek(0))) {
+                    frame->ip = ip;
+                    runtimeError("Only instances have properties.");
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                ObjInstance *instance = AS_INSTANCE(peek(0));
+                ObjString *name = AS_STRING(READ_CONSTANT());
+
+                Value value;
+                if (tableGet(&instance->fields, name, &value)) {
+                    pop(1);
+                    push(value);
+                    break;
+                }
+
+                if (!bindMethod(instance->klass, name)) {
+                    frame->ip = ip;
+                    runtimeError("Undefined property '%.*s'.", name->length, AS_CSTRING(name));
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                break;
+            }
+            case OP_SET_PROPERTY: {
+                if (!IS_INSTANCE(peek(1))) {
+                    frame->ip = ip;
+                    runtimeError("Only instances have fields.");
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+
+                ObjInstance *instance = AS_INSTANCE(peek(1));
+                tableSet(&instance->fields, AS_STRING(READ_CONSTANT()), peek(0));
+                Value value = pop(1);
+                pop(1);
+                push(value);
+                break;
+            }
+            case OP_GET_SUPER: {
+                ObjString *name = AS_STRING(READ_CONSTANT());
+                ObjClass *superclass = AS_CLASS(pop(1));
+
+                if (!bindMethod(superclass, name)) {
+                    frame->ip = ip;
+                    runtimeError("Undefined super property '%.*s'.", name->length, AS_CSTRING(name));
+                    return INTERPRET_RUNTIME_ERROR;
+                }
                 break;
             }
             case OP_EQUAL: {
@@ -451,6 +663,29 @@ static InterpretResult run() {
                 ip = frame->ip;
                 break;
             }
+            case OP_INVOKE: {
+                ObjString *method = AS_STRING(READ_CONSTANT());
+                int argCount = READ_BYTE();
+                frame->ip = ip;
+                if (!invoke(method, argCount)) {
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                frame = &vm.frames[vm.frameCount - 1];
+                ip = frame->ip;
+                break;
+            }
+            case OP_INVOKE_SUPER: {
+                ObjString *method = AS_STRING(READ_CONSTANT());
+                int argCount = READ_BYTE();
+                ObjClass *superclass = AS_CLASS(pop(1));
+                frame->ip = ip;
+                if (!invokeFromClass(superclass, method, argCount)) {
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                frame = &vm.frames[vm.frameCount - 1];
+                ip = frame->ip;
+                break;
+            }
             case OP_CLOSURE: {
                 ObjFunction *function = AS_FUNCTION(READ_CONSTANT());
                 ObjClosure *closure = newClosure(function);
@@ -482,6 +717,31 @@ static InterpretResult run() {
                 ip = frame->ip;
                 break;
             }
+            case OP_INHERIT: {
+                Value superclass = peek(1);
+
+                if (!IS_CLASS(superclass)) {
+                    frame->ip = ip;
+                    runtimeError("Superclass must be a class.");
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+
+                ObjClass *subclass = AS_CLASS(peek(0));
+                tableAddAll(&AS_CLASS(superclass)->methods, &subclass->methods);
+                pop(1);
+                break;
+            }
+            case OP_CLASS: {
+                push(OBJ_VAL(newClass(AS_STRING(READ_CONSTANT()))));
+                break;
+            }
+            case OP_METHOD:
+                if (!defineMethod(AS_STRING(READ_CONSTANT()))) {
+                    frame->ip = ip;
+                    runtimeError("class initializer redeclared");
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                break;
         }
     }
 
