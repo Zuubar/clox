@@ -347,14 +347,14 @@ static void endScope() {
 }
 
 static int globalVariable(Token *name) {
-    Value variable = OBJ_VAL(makeString(name->start, name->length, true));
+    ObjString* variable = makeString(name->start, name->length, true);
     Value identifier;
 
     if (tableGet(&buffer.globalVarIdentifiers, variable, &identifier)) {
         return AS_NUMBER(identifier);
     }
 
-    int newIdentifier = makeConstant(variable);
+    int newIdentifier = makeConstant(OBJ_VAL(variable));
     tableSet(&buffer.globalVarIdentifiers, variable, NUMBER_VAL(newIdentifier));
     return newIdentifier;
 }
@@ -485,7 +485,7 @@ static void defineVariable(uint32_t global, Token name, bool isConst) {
     }
 
     if (isConst) {
-        tableSet(&buffer.constVarIdentifiers, OBJ_VAL(makeString(name.start, name.length, true)), BOOL_VAL(true));
+        tableSet(&buffer.constVarIdentifiers, makeString(name.start, name.length, true), BOOL_VAL(true));
     }
 
     emitShort(OP_DEFINE_GLOBAL, global);
@@ -524,7 +524,7 @@ static void namedVariable(Token name, bool canAssign) {
 
     if (canAssign && match(TOKEN_EQUAL)) {
         Value val;
-        if ((tableGet(&buffer.constVarIdentifiers, OBJ_VAL(makeString(name.start, name.length, true)), &val)) ||
+        if ((tableGet(&buffer.constVarIdentifiers, makeString(name.start, name.length, true), &val)) ||
             (arg != -1 && setOp != OP_SET_GLOBAL && current->locals[arg].isConst)) {
             error("Cannot assign to a constant variable.");
             return;

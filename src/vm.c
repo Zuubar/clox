@@ -3,6 +3,7 @@
 #include <stdarg.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 #include "buffer.h"
 #include "common.h"
 #include "debug.h"
@@ -21,51 +22,55 @@ static Value clockNative(int argCount, Value *args) {
 
 static Value strNative(int argCount, Value *args) {
     Value value = args[0];
-    switch (value.type) {
-        case VAL_BOOL:
-            return OBJ_VAL(AS_BOOL(value) ? makeString("true", 4, false) : makeString("false", 5, false));
-        case VAL_NIL:
-            return OBJ_VAL(makeString("nil", 3, false));
-        case VAL_NUMBER: {
-            char buff[32];
-            int written = snprintf(buff, 32, "%g", AS_NUMBER(value));
-            return OBJ_VAL(makeString(buff, written > 31 ? 31 : written, false));
-        }
-        case VAL_OBJ:
-            switch (OBJ_TYPE(value)) {
-                case OBJ_STRING: {
-                    return value;
-                }
-                case OBJ_NATIVE:
-                    return OBJ_VAL(makeString("<native fn>", 11, false));
-                case OBJ_CLOSURE: {
-                    char buff[64];
-                    ObjFunction *function = AS_CLOSURE(value)->function;
-                    int written = snprintf(buff, 64, "<fn %.*s>", function->name->length, AS_CSTRING(function->name));
-                    return OBJ_VAL(makeString(buff, written > 63 ? 63 : written, false));
-                }
-                case OBJ_FUNCTION:
-                    break;
-                case OBJ_UPVALUE:
-                    return OBJ_VAL(makeString("upvalue", 7, false));
-                case OBJ_CLASS: {
-                    char buff[64];
-                    ObjClass *klass = AS_CLASS(value);
-                    int written = snprintf(buff, 64, "<fn %.*s>", klass->name->length, AS_CSTRING(klass->name));
-                    return OBJ_VAL(makeString(buff, written > 63 ? 63 : written, false));
-                }
-                case OBJ_INSTANCE: {
-                    char buff[64];
-                    ObjInstance *instance = AS_INSTANCE(value);
-                    int written = snprintf(buff, 64, "<fn %.*s>", instance->klass->name->length,
-                                           AS_CSTRING(instance->klass->name));
-                    return OBJ_VAL(makeString(buff, written > 63 ? 63 : written, false));
-                }
+    if (IS_BOOL(value)) {
+        return OBJ_VAL(AS_BOOL(value) ? makeString("true", 4, false) : makeString("false", 5, false));
+    } else if (IS_NIL(value)) {
+        return OBJ_VAL(makeString("nil", 3, false));
+    } else if (IS_NUMBER(value)) {
+        char buff[32];
+        int written = snprintf(buff, 32, "%g", AS_NUMBER(value));
+        return OBJ_VAL(makeString(buff, written > 31 ? 31 : written, false));
+    } else if (IS_OBJ(value)) {
+        switch (OBJ_TYPE(value)) {
+            case OBJ_STRING: {
+                return value;
             }
-        default:
-            runtimeError("Unsupported type.");
-            return UNDEFINED_VAL;
+            case OBJ_NATIVE:
+                return OBJ_VAL(makeString("<native fn>", 11, false));
+            case OBJ_CLOSURE: {
+                char buff[64];
+                ObjFunction *function = AS_CLOSURE(value)->function;
+                int written = snprintf(buff, 64, "<fn %.*s>", function->name->length, AS_CSTRING(function->name));
+                return OBJ_VAL(makeString(buff, written > 63 ? 63 : written, false));
+            }
+            case OBJ_FUNCTION:
+                break;
+            case OBJ_UPVALUE:
+                return OBJ_VAL(makeString("upvalue", 7, false));
+            case OBJ_CLASS: {
+                char buff[64];
+                ObjClass *klass = AS_CLASS(value);
+                int written = snprintf(buff, 64, "%.*s", klass->name->length, AS_CSTRING(klass->name));
+                return OBJ_VAL(makeString(buff, written > 63 ? 63 : written, false));
+            }
+            case OBJ_INSTANCE: {
+                char buff[64];
+                ObjInstance *instance = AS_INSTANCE(value);
+                int written = snprintf(buff, 64, "%.*s instance", instance->klass->name->length,
+                                       AS_CSTRING(instance->klass->name));
+                return OBJ_VAL(makeString(buff, written > 63 ? 63 : written, false));
+            }
+            case OBJ_BOUND_METHOD: {
+                char buff[64];
+                ObjBoundMethod *bound = AS_BOUND_METHOD(value);
+                int written = snprintf(buff, 64, "<fn %.*s>", bound->method->function->name->length,
+                                       AS_CSTRING(bound->method->function->name));
+                return OBJ_VAL(makeString(buff, written > 63 ? 63 : written, false));
+            }
+        }
     }
+    runtimeError("Unsupported type.");
+    return UNDEFINED_VAL;
 }
 
 static Value sqrtNative(int argCount, Value *args) {
@@ -91,7 +96,7 @@ static Value getFieldNative(int argCount, Value *args) {
     ObjString *name = AS_STRING(args[1]);
     Value value;
 
-    if (!tableGet(&instance->fields, args[1], &value)) {
+    if (!tableGet(&instance->fields, name, &value)) {
         runtimeError("Undefined field '%.*s'.", name->length, AS_CSTRING(name));
         return UNDEFINED_VAL;
     }
@@ -111,7 +116,7 @@ static Value setFieldNative(int argCount, Value *args) {
     }
 
     ObjInstance *instance = AS_INSTANCE(args[0]);
-    tableSet(&instance->fields, args[1], args[2]);
+    tableSet(&instance->fields, AS_STRING(args[1]), args[2]);
 
     return NIL_VAL;
 }
@@ -128,7 +133,7 @@ static Value deleteFieldNative(int argCount, Value *args) {
     }
 
     ObjInstance *instance = AS_INSTANCE(args[0]);
-    tableDelete(&instance->fields, &args[1]);
+    tableDelete(&instance->fields, AS_STRING(args[1]));
 
     return NIL_VAL;
 }
@@ -173,7 +178,7 @@ static void defineNative(const char *name, NativeFn function, int arity) {
 
     writeValueArray(&buffer.globalVars, vm.stack[0]);
     writeValueArray(&buffer.globalVars, vm.stack[1]);
-    tableSet(&buffer.globalVarIdentifiers, vm.stack[0], NUMBER_VAL(buffer.globalVars.count - 1));
+    tableSet(&buffer.globalVarIdentifiers, AS_STRING(vm.stack[0]), NUMBER_VAL(buffer.globalVars.count - 1));
 
     pop(2);
 }
@@ -189,7 +194,7 @@ void initVM() {
     vm.grayCapacity = 0;
     vm.grayStack = NULL;
 
-    initTable(&vm.strings, VAL_OBJ);
+    initTable(&vm.strings);
 
     vm.initString = NULL;
     vm.initString = makeString("init", 4, false);
@@ -299,7 +304,7 @@ static bool callValue(Value callee, int argCount) {
 
 static bool invokeFromClass(ObjClass *klass, ObjString *name, uint8_t arcCount) {
     Value method;
-    if (!tableGet(&klass->methods, OBJ_VAL(name), &method)) {
+    if (!tableGet(&klass->methods, name, &method)) {
         runtimeError("Undefined property '%s'.", name->chars);
         return false;
     }
@@ -317,7 +322,7 @@ static bool invoke(ObjString *name, int argCount) {
     ObjInstance *instance = AS_INSTANCE(receiver);
 
     Value value;
-    if (tableGet(&instance->fields, OBJ_VAL(name), &value)) {
+    if (tableGet(&instance->fields, name, &value)) {
         vm.stackTop[-argCount - 1] = value;
         return callValue(value, argCount);
     }
@@ -327,7 +332,7 @@ static bool invoke(ObjString *name, int argCount) {
 
 static bool bindMethod(ObjClass *klass, ObjString *name) {
     Value method;
-    if (!tableGet(&klass->methods, OBJ_VAL(name), &method)) {
+    if (!tableGet(&klass->methods, name, &method)) {
         return false;
     }
 
@@ -374,7 +379,7 @@ static void closeUpvalues(Value *last) {
 static bool defineMethod(ObjString *name) {
     Value method = peek(0);
     ObjClass *klass = AS_CLASS(peek(1));
-    tableSet(&klass->methods, OBJ_VAL(name), method);
+    tableSet(&klass->methods, name, method);
 
     if (name == vm.initString) {
         if (!IS_NIL(klass->initializer)) {
@@ -407,7 +412,7 @@ static void concatenate() {
         result = interned;
     } else {
         push(OBJ_VAL(result));
-        tableSet(&vm.strings, OBJ_VAL(result), NIL_VAL);
+        tableSet(&vm.strings, result, NIL_VAL);
         pop(1);
     }
 
@@ -482,7 +487,7 @@ static InterpretResult run() {
             case OP_GET_GLOBAL: {
                 uint16_t variableIndex = READ_SHORT();
                 Value *globals = buffer.globalVars.values;
-                if (globals[variableIndex].type == VAL_UNDEFINED) {
+                if (IS_UNDEFINED(globals[variableIndex])) {
                     frame->ip = ip;
                     ObjString *varName = AS_STRING(globals[variableIndex - 1]);
                     runtimeError("Undefined variable '%.*s'.", varName->length, AS_CSTRING(varName));
@@ -497,7 +502,7 @@ static InterpretResult run() {
                 uint16_t variableIndex = READ_SHORT();
                 Value *globals = buffer.globalVars.values;
 
-                if (globals[variableIndex].type == VAL_UNDEFINED) {
+                if (IS_UNDEFINED(globals[variableIndex])) {
                     frame->ip = ip;
                     ObjString *varName = AS_STRING(globals[variableIndex - 1]);
                     runtimeError("Undefined variable '%.*s'.", varName->length, AS_CSTRING(varName));
@@ -543,7 +548,7 @@ static InterpretResult run() {
                 ObjString *name = AS_STRING(READ_CONSTANT());
 
                 Value value;
-                if (tableGet(&instance->fields, OBJ_VAL(name), &value)) {
+                if (tableGet(&instance->fields, name, &value)) {
                     pop(1);
                     push(value);
                     break;
@@ -564,7 +569,7 @@ static InterpretResult run() {
                 }
 
                 ObjInstance *instance = AS_INSTANCE(peek(1));
-                tableSet(&instance->fields, READ_CONSTANT(), peek(0));
+                tableSet(&instance->fields, AS_STRING(READ_CONSTANT()), peek(0));
                 Value value = pop(1);
                 pop(1);
                 push(value);

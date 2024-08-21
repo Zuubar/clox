@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <stdarg.h>
 
 #include "memory.h"
 #include "object.h"
@@ -63,7 +64,7 @@ ObjString *makeString(const char *chars, int length, bool reference) {
     string->hash = hash;
 
     push(OBJ_VAL(string));
-    tableSet(&vm.strings, OBJ_VAL(string), NIL_VAL);
+    tableSet(&vm.strings, string, NIL_VAL);
     pop(1);
     return string;
 }
@@ -101,14 +102,14 @@ ObjClass *newClass(ObjString *name) {
     ObjClass *klass = ALLOCATE_OBJ(ObjClass, OBJ_CLASS);
     klass->name = name;
     klass->initializer = NIL_VAL;
-    initTable(&klass->methods, VAL_OBJ);
+    initTable(&klass->methods);
     return klass;
 }
 
 ObjInstance *newInstance(ObjClass *klass) {
     ObjInstance *instance = ALLOCATE_OBJ(ObjInstance, OBJ_INSTANCE);
     instance->klass = klass;
-    initTable(&instance->fields, VAL_OBJ);
+    initTable(&instance->fields);
     return instance;
 }
 

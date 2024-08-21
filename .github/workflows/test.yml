@@ -22,7 +22,7 @@ jobs:
           sudo apt-get install -y ninja-build
 
       - name: Generate build files
-        run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCMAKE_C_FLAGS=-fsanitize=address,undefined,leak -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined,leak -DDEBUG_STRESS_GC:BOOL=ON -G Ninja .
+        run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCMAKE_C_FLAGS=-fsanitize=address,undefined,leak -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined,leak -DDEBUG_TRACE_EXECUTION:BOOL=OFF -DDEBUG_PRINT_CODE:BOOL=OFF -DDEBUG_LOG_GC:BOOL=OFF -DDEBUG_STRESS_GC:BOOL=ON -DNAN_BOXING:BOOL=ON -G Ninja .
 
       - name: Build
         working-directory: ${{github.workspace}}/build
