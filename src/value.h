@@ -99,6 +99,8 @@ bool valuesEqual(Value a, Value b);
 
 void initValueArray(ValueArray *array);
 
+void preAllocateValueArray(ValueArray *array, Value *source, int initialCapacity);
+
 void writeValueArray(ValueArray *array, Value value);
 
 void freeValueArray(ValueArray *array);

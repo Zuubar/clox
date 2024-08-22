@@ -181,6 +181,10 @@ int disassembleInstruction(Chunk *chunk, int offset) {
             return simpleInstruction("OP_INHERIT", offset);
         case OP_METHOD:
             return longInstruction("OP_METHOD", chunk, offset);
+        case OP_ARRAY:
+            return shortInstruction("OP_ARRAY", chunk, offset);
+        case OP_ARRAY_GET:
+            return simpleInstruction("OP_ARRAY_GET", offset);
         default:
             printf("Unknown opcode %d\n", instruction);
             exit(1);

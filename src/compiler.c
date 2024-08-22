@@ -347,7 +347,7 @@ static void endScope() {
 }
 
 static int globalVariable(Token *name) {
-    ObjString* variable = makeString(name->start, name->length, true);
+    ObjString *variable = makeString(name->start, name->length, true);
     Value identifier;
 
     if (tableGet(&buffer.globalVarIdentifiers, variable, &identifier)) {
@@ -504,6 +504,21 @@ static uint8_t argumentList() {
     }
     consume(TOKEN_RIGHT_PAREN, "Expected ')' after arguments.");
     return argCount;
+}
+
+static uint16_t arrayElements() {
+    uint16_t elementCount = 0;
+    if (!check(TOKEN_RIGHT_BRACKET)) {
+        do {
+            expression();
+            if (elementCount == 1024) {
+                error("Can't have more than 1024 elements in array declaration.");
+            }
+            elementCount++;
+        } while (match(TOKEN_COMMA));
+    }
+    consume(TOKEN_RIGHT_BRACKET, "Expected ']' after array declaration.");
+    return elementCount;
 }
 
 static void namedVariable(Token name, bool canAssign) {
@@ -724,6 +739,17 @@ static void conditional(bool canAssign) {
     emitByte(OP_POP);
     parsePrecedence(PREC_ASSIGNMENT);
     patchJump(endJump);
+}
+
+static void array(bool canAssign) {
+    uint16_t elementCount = arrayElements();
+    emitShort(OP_ARRAY, elementCount);
+}
+
+static void arrayGet(bool canAssign) {
+    parsePrecedence(PREC_CALL);
+    consume(TOKEN_RIGHT_BRACKET, "Expected ']' after array get expression.");
+    emitByte(OP_ARRAY_GET);
 }
 
 static void expression() {
@@ -1165,6 +1191,8 @@ ParseRule rules[] = {
         [TOKEN_RIGHT_PAREN]   = {NULL, NULL, PREC_NONE},
         [TOKEN_LEFT_BRACE]    = {NULL, NULL, PREC_NONE},
         [TOKEN_RIGHT_BRACE]   = {NULL, NULL, PREC_NONE},
+        [TOKEN_LEFT_BRACKET]  = {array, arrayGet, PREC_CALL},
+        [TOKEN_RIGHT_BRACKET] = {NULL, NULL, PREC_NONE},
         [TOKEN_COMMA]         = {NULL, NULL, PREC_NONE},
         [TOKEN_DOT]           = {NULL, dot, PREC_CALL},
         [TOKEN_MINUS]         = {unary, binary, PREC_TERM},

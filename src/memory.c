@@ -82,6 +82,11 @@ static void freeObject(Obj *object) {
             FREE(ObjBoundMethod, object);
             break;
         }
+        case OBJ_ARRAY: {
+            ObjArray *objArray = (ObjArray *) object;
+            reallocate(objArray, sizeof(ObjArray) + sizeof(Value[objArray->capacity]), 0);
+            break;
+        }
     }
 }
 
@@ -94,6 +99,14 @@ void markObject(Obj *object) {
 #endif
 
     object->isMarked = true;
+
+    if (object->type == OBJ_ARRAY) {
+        ObjArray *objArray = (ObjArray*)object;
+        for (int i = 0; i < objArray->count; i++) {
+            markValue(objArray->values[i]);
+        }
+    }
+
     if (vm.grayCapacity < vm.grayCount + 1) {
         vm.grayCapacity = GROW_CAPACITY(vm.grayCapacity);
         vm.grayStack = (Obj **) realloc(vm.grayStack, sizeof(Obj *) * vm.grayCapacity);
@@ -157,9 +170,9 @@ void blackenObject(Obj *object) {
             break;
         }
         case OBJ_BOUND_METHOD: {
-            ObjBoundMethod *bound = (ObjBoundMethod*)object;
+            ObjBoundMethod *bound = (ObjBoundMethod *) object;
             markValue(bound->receiver);
-            markObject((Obj*)bound->method);
+            markObject((Obj *) bound->method);
             break;
         }
         case OBJ_NATIVE:
@@ -183,7 +196,7 @@ static void markRoots() {
 
     markBufferRoots();
     markCompilerRoots();
-    markObject((Obj*)vm.initString);
+    markObject((Obj *) vm.initString);
 }
 
 static void traceReferences() {

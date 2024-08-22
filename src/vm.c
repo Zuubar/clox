@@ -738,10 +738,49 @@ static InterpretResult run() {
             case OP_METHOD:
                 if (!defineMethod(AS_STRING(READ_CONSTANT()))) {
                     frame->ip = ip;
-                    runtimeError("class initializer redeclared");
+                    runtimeError("class initializer redeclared.");
                     return INTERPRET_RUNTIME_ERROR;
                 }
                 break;
+            case OP_ARRAY: {
+                uint16_t elements = READ_SHORT();
+                Value array = OBJ_VAL(newArray(vm.stackTop - elements, elements));
+                pop(elements);
+                push(array);
+                break;
+            }
+            case OP_ARRAY_GET: {
+                Value rawIdx = pop(1);
+                if (!IS_NUMBER(rawIdx)) {
+                    frame->ip = ip;
+                    runtimeError("array index should be a number.");
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+
+                double index = AS_NUMBER(rawIdx);
+                if (index != trunc(index)) {
+                    frame->ip = ip;
+                    runtimeError("array index should be an integer.");
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+
+                if (index < 0) {
+                    frame->ip = ip;
+                    runtimeError("array index should be positive.");
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+
+                ObjArray *objArray = AS_ARRAY(pop(1));
+
+                if (index >= objArray->count) {
+                    frame->ip = ip;
+                    runtimeError("array index is out of bounds.");
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+
+                push(objArray->values[(int) index]);
+                break;
+            }
         }
     }
 

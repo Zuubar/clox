@@ -120,6 +120,26 @@ ObjBoundMethod *newBoundMethod(Value receiver, ObjClosure *method) {
     return bound;
 }
 
+ObjArray *newArray(Value *source, uint16_t length) {
+    int capacity = length;
+    if (length != 0) {
+        capacity -= 1;
+        for (int i = 1; i < 32; i *= 2) {
+            capacity |= capacity >> i;
+        }
+        capacity += 1;
+    }
+
+    ObjArray *arrayObj = (ObjArray *) allocateObject(sizeof(ObjArray) + sizeof(Value[capacity]), OBJ_ARRAY);
+    arrayObj->count = 0;
+    arrayObj->capacity = capacity;
+
+    for (Value *val = source; val < source + length; val++) {
+        arrayObj->values[arrayObj->count++] = *val;
+    }
+    return arrayObj;
+}
+
 ObjUpvalue *newUpvalue(Value *value) {
     ObjUpvalue *upvalue = ALLOCATE_OBJ(ObjUpvalue, OBJ_UPVALUE);
     upvalue->location = value;
@@ -169,6 +189,18 @@ void printObject(Value value) {
         case OBJ_BOUND_METHOD:
             printFunction(AS_BOUND_METHOD(value)->method->function);
             break;
+        case OBJ_ARRAY: {
+            ObjArray *array = AS_ARRAY(value);
+            printf("[");
+            for (int i = 0; i < array->count; i++) {
+                printValue(array->values[i]);
+                if (i + 1 != array->count) {
+                    printf(", ");
+                }
+            }
+            printf("]");
+            break;
+        }
         default:
             printf("Unknown object.");
             break;

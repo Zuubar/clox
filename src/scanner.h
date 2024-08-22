@@ -5,6 +5,7 @@ typedef enum {
     // Single-character tokens.
     TOKEN_LEFT_PAREN, TOKEN_RIGHT_PAREN,
     TOKEN_LEFT_BRACE, TOKEN_RIGHT_BRACE,
+    TOKEN_LEFT_BRACKET, TOKEN_RIGHT_BRACKET,
     TOKEN_COMMA, TOKEN_DOT, TOKEN_MINUS, TOKEN_PLUS, TOKEN_MODULO,
     TOKEN_SEMICOLON, TOKEN_SLASH, TOKEN_STAR, TOKEN_QUESTION, TOKEN_COLON,
     // One or two character tokens.
@@ -26,12 +27,13 @@ typedef enum {
 
 typedef struct {
     TokenType type;
-    const char* start;
+    const char *start;
     int length;
     int line;
 } Token;
 
 void initScanner(const char *source);
+
 Token scanToken();
 
 #endif //CLOX_SCANNER_H
