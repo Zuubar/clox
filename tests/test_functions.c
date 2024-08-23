@@ -1,6 +1,5 @@
 #include "common.h"
-#include "../src/compiler.h"
-#include "unity_internals.h"
+#include "unity.h"
 
 void testFunctions() {
     const char *program1 = "fun sum(a, b) {"
@@ -73,6 +72,14 @@ void testNativeStrFunction() {
                            "        return \"Fry until golden brown.\" + \"Place in a nice box.\";"
                            "    }"
                            "}"
+                           "var arr = [];"
+                           "for (var i = 5; i >= 0; i = i - 1) {"
+                           "    var inner = [];"
+                           "    for (var j = i; j >= 0; j = j - 1) {"
+                           "        append(inner, j);"
+                           "    }"
+                           "    append(arr, inner);"
+                           "}"
                            "print str(false);"
                            "print str(true);"
                            "print str(nil);"
@@ -84,11 +91,14 @@ void testNativeStrFunction() {
                            "print str(str(clock));"
                            "print str(Doughnut);"
                            "print str(Doughnut());"
-                           "print str(Doughnut().cook);";
+                           "print str(Doughnut().cook);"
+                           "print str([]);"
+                           "print str([4, 8, 15, 16, 23, 42]);"
+                           "print str(arr);";
 
     const char *cases[][2] = {
             {program1,
-             "false\ntrue\nnil\n128\n1e+124\n<fn QDkwKxRmhgZhrwnMnOzjkgVHmfxVbboRVhawfCMQjcpVDFnAlNjuYBADQFX\n<fn very_very_very_very_very_very_very_very_very_very_long_func\n<fn fib>\n<native fn>\nDoughnut\nDoughnut instance\n<fn cook>\n"},
+             "false\ntrue\nnil\n128\n1e+124\n<fn QDkwKxRmhgZhrwnMnOzjkgVHmfxVbboRVhawfCMQjcpVDFnAlNjuYBADQFX>\n<fn very_very_very_very_very_very_very_very_very_very_long_function>\n<fn fib>\n<native fn>\nDoughnut\nDoughnut instance\n<fn cook>\n[]\n[4, 8, 15, 16, 23, 42]\n[[5, 4, 3, 2, 1, 0], [4, 3, 2, 1, 0], [3, 2, 1, 0], [2, 1, 0], [1, 0], [0]]\n"},
     };
     TEST_PROGRAMS(cases);
 }

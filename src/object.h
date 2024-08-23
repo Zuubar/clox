@@ -101,7 +101,7 @@ typedef struct {
     Obj obj;
     int capacity;
     int count;
-    Value values[];
+    Value *values;
 } ObjArray;
 
 typedef Value (*NativeFn)(int argCount, Value *args);
@@ -117,6 +117,8 @@ uint32_t hashString(const char *key, int length);
 struct ObjString *allocateString(int length, bool referenced);
 
 struct ObjString *makeString(const char *chars, int length, bool reference);
+
+Obj *allocateObject(size_t size, ObjType type);
 
 ObjFunction *newFunction();
 

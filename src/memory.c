@@ -18,6 +18,12 @@
 
 void *reallocate(void *pointer, size_t oldSize, size_t newSize) {
     vm.bytesAllocated += newSize - oldSize;
+
+    if (newSize == 0) {
+        free(pointer);
+        return NULL;
+    }
+
     if (newSize > oldSize) {
 #ifdef DEBUG_STRESS_GC
         collectGarbage();
@@ -26,11 +32,6 @@ void *reallocate(void *pointer, size_t oldSize, size_t newSize) {
 
     if (vm.bytesAllocated > vm.nextGC) {
         collectGarbage();
-    }
-
-    if (newSize == 0) {
-        free(pointer);
-        return NULL;
     }
 
     void *result = realloc(pointer, newSize);
@@ -84,7 +85,8 @@ static void freeObject(Obj *object) {
         }
         case OBJ_ARRAY: {
             ObjArray *objArray = (ObjArray *) object;
-            reallocate(objArray, sizeof(ObjArray) + sizeof(Value[objArray->capacity]), 0);
+            FREE_ARRAY(Value*, objArray->values, objArray->capacity);
+            FREE(ObjArray, object);
             break;
         }
     }

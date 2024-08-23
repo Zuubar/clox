@@ -746,10 +746,16 @@ static void array(bool canAssign) {
     emitShort(OP_ARRAY, elementCount);
 }
 
-static void arrayGet(bool canAssign) {
+static void arrayAccess(bool canAssign) {
     parsePrecedence(PREC_CALL);
     consume(TOKEN_RIGHT_BRACKET, "Expected ']' after array get expression.");
-    emitByte(OP_ARRAY_GET);
+
+    if (match(TOKEN_EQUAL)) {
+        expression();
+        emitByte(OP_ARRAY_SET);
+    } else {
+        emitByte(OP_ARRAY_GET);
+    }
 }
 
 static void expression() {
@@ -1191,7 +1197,7 @@ ParseRule rules[] = {
         [TOKEN_RIGHT_PAREN]   = {NULL, NULL, PREC_NONE},
         [TOKEN_LEFT_BRACE]    = {NULL, NULL, PREC_NONE},
         [TOKEN_RIGHT_BRACE]   = {NULL, NULL, PREC_NONE},
-        [TOKEN_LEFT_BRACKET]  = {array, arrayGet, PREC_CALL},
+        [TOKEN_LEFT_BRACKET]  = {array, arrayAccess, PREC_CALL},
         [TOKEN_RIGHT_BRACKET] = {NULL, NULL, PREC_NONE},
         [TOKEN_COMMA]         = {NULL, NULL, PREC_NONE},
         [TOKEN_DOT]           = {NULL, dot, PREC_CALL},

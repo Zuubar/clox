@@ -185,6 +185,8 @@ int disassembleInstruction(Chunk *chunk, int offset) {
             return shortInstruction("OP_ARRAY", chunk, offset);
         case OP_ARRAY_GET:
             return simpleInstruction("OP_ARRAY_GET", offset);
+        case OP_ARRAY_SET:
+            return simpleInstruction("OP_ARRAY_SET", offset);
         default:
             printf("Unknown opcode %d\n", instruction);
             exit(1);

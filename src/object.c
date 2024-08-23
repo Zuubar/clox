@@ -20,7 +20,7 @@ uint32_t hashString(const char *key, int length) {
     return hash;
 }
 
-static Obj *allocateObject(size_t size, ObjType type) {
+Obj *allocateObject(size_t size, ObjType type) {
     Obj *object = (Obj *) reallocate(NULL, 0, size);
     object->type = type;
     object->isMarked = false;
@@ -130,9 +130,12 @@ ObjArray *newArray(Value *source, uint16_t length) {
         capacity += 1;
     }
 
-    ObjArray *arrayObj = (ObjArray *) allocateObject(sizeof(ObjArray) + sizeof(Value[capacity]), OBJ_ARRAY);
+    ObjArray *arrayObj = ALLOCATE_OBJ(ObjArray, OBJ_ARRAY);
+    push(OBJ_VAL(arrayObj));
     arrayObj->count = 0;
     arrayObj->capacity = capacity;
+    arrayObj->values = GROW_ARRAY(Value, NULL, 0, arrayObj->capacity);
+    pop(1);
 
     for (Value *val = source; val < source + length; val++) {
         arrayObj->values[arrayObj->count++] = *val;
