@@ -18,14 +18,14 @@
 
 void *reallocate(void *pointer, size_t oldSize, size_t newSize) {
     vm.bytesAllocated += newSize - oldSize;
+
     if (newSize > oldSize) {
 #ifdef DEBUG_STRESS_GC
         collectGarbage();
 #endif
-    }
-
-    if (vm.bytesAllocated > vm.nextGC) {
-        collectGarbage();
+        if (vm.bytesAllocated > vm.nextGC) {
+            collectGarbage();
+        }
     }
 
     if (newSize == 0) {
@@ -45,7 +45,11 @@ static void freeObject(Obj *object) {
 
     switch (object->type) {
         case OBJ_STRING: {
-            FREE_STRING((ObjString *) object);
+            ObjString *str = (ObjString *) object;
+            if (!str->reference) {
+                FREE_ARRAY(char, str->chars, str->length + 1);
+            }
+            FREE(ObjString, object);
             break;
         }
         case OBJ_FUNCTION: {
@@ -82,6 +86,12 @@ static void freeObject(Obj *object) {
             FREE(ObjBoundMethod, object);
             break;
         }
+        case OBJ_ARRAY: {
+            ObjArray *objArray = (ObjArray *) object;
+            FREE_ARRAY(Value*, objArray->values, objArray->capacity);
+            FREE(ObjArray, object);
+            break;
+        }
     }
 }
 
@@ -94,6 +104,14 @@ void markObject(Obj *object) {
 #endif
 
     object->isMarked = true;
+
+    if (object->type == OBJ_ARRAY) {
+        ObjArray *objArray = (ObjArray *) object;
+        for (int i = 0; i < objArray->count; i++) {
+            markValue(objArray->values[i]);
+        }
+    }
+
     if (vm.grayCapacity < vm.grayCount + 1) {
         vm.grayCapacity = GROW_CAPACITY(vm.grayCapacity);
         vm.grayStack = (Obj **) realloc(vm.grayStack, sizeof(Obj *) * vm.grayCapacity);
@@ -157,9 +175,9 @@ void blackenObject(Obj *object) {
             break;
         }
         case OBJ_BOUND_METHOD: {
-            ObjBoundMethod *bound = (ObjBoundMethod*)object;
+            ObjBoundMethod *bound = (ObjBoundMethod *) object;
             markValue(bound->receiver);
-            markObject((Obj*)bound->method);
+            markObject((Obj *) bound->method);
             break;
         }
         case OBJ_NATIVE:
@@ -183,7 +201,7 @@ static void markRoots() {
 
     markBufferRoots();
     markCompilerRoots();
-    markObject((Obj*)vm.initString);
+    markObject((Obj *) vm.initString);
 }
 
 static void traceReferences() {

@@ -21,56 +21,43 @@ static Value clockNative(int argCount, Value *args) {
 }
 
 static Value strNative(int argCount, Value *args) {
-    Value value = args[0];
-    if (IS_BOOL(value)) {
-        return OBJ_VAL(AS_BOOL(value) ? makeString("true", 4, false) : makeString("false", 5, false));
-    } else if (IS_NIL(value)) {
-        return OBJ_VAL(makeString("nil", 3, false));
-    } else if (IS_NUMBER(value)) {
-        char buff[32];
-        int written = snprintf(buff, 32, "%g", AS_NUMBER(value));
-        return OBJ_VAL(makeString(buff, written > 31 ? 31 : written, false));
-    } else if (IS_OBJ(value)) {
-        switch (OBJ_TYPE(value)) {
-            case OBJ_STRING: {
-                return value;
-            }
-            case OBJ_NATIVE:
-                return OBJ_VAL(makeString("<native fn>", 11, false));
-            case OBJ_CLOSURE: {
-                char buff[64];
-                ObjFunction *function = AS_CLOSURE(value)->function;
-                int written = snprintf(buff, 64, "<fn %.*s>", function->name->length, AS_CSTRING(function->name));
-                return OBJ_VAL(makeString(buff, written > 63 ? 63 : written, false));
-            }
-            case OBJ_FUNCTION:
-                break;
-            case OBJ_UPVALUE:
-                return OBJ_VAL(makeString("upvalue", 7, false));
-            case OBJ_CLASS: {
-                char buff[64];
-                ObjClass *klass = AS_CLASS(value);
-                int written = snprintf(buff, 64, "%.*s", klass->name->length, AS_CSTRING(klass->name));
-                return OBJ_VAL(makeString(buff, written > 63 ? 63 : written, false));
-            }
-            case OBJ_INSTANCE: {
-                char buff[64];
-                ObjInstance *instance = AS_INSTANCE(value);
-                int written = snprintf(buff, 64, "%.*s instance", instance->klass->name->length,
-                                       AS_CSTRING(instance->klass->name));
-                return OBJ_VAL(makeString(buff, written > 63 ? 63 : written, false));
-            }
-            case OBJ_BOUND_METHOD: {
-                char buff[64];
-                ObjBoundMethod *bound = AS_BOUND_METHOD(value);
-                int written = snprintf(buff, 64, "<fn %.*s>", bound->method->function->name->length,
-                                       AS_CSTRING(bound->method->function->name));
-                return OBJ_VAL(makeString(buff, written > 63 ? 63 : written, false));
-            }
+    fflush(stdout);
+    int outPipedes[2];
+    int outFd = dup(STDOUT_FILENO);
+
+    if (pipe(outPipedes) == -1) {
+        printf("Failed to create pipe.");
+        exit(127);
+    }
+
+    dup2(outPipedes[1], STDOUT_FILENO);
+    close(outPipedes[1]);
+
+    printValue(args[0]);
+
+    fflush(stdout);
+    dup2(outFd, STDOUT_FILENO);
+
+    size_t bufferSize = 64;
+    ssize_t bytesRead, totalBytesRead = 0;
+    char *buff = (char *) reallocate(NULL, 0, 64);
+
+    while ((bytesRead = read(outPipedes[0], buff + totalBytesRead, bufferSize - totalBytesRead - 1)) > 0) {
+        totalBytesRead += bytesRead;
+
+        if (totalBytesRead >= bufferSize - 1) {
+            buff = reallocate(buff, bufferSize, bufferSize * 2);
+            bufferSize *= 2;
         }
     }
-    runtimeError("Unsupported type.");
-    return UNDEFINED_VAL;
+
+    if (totalBytesRead > 0) {
+        buff[totalBytesRead] = '\0';
+    }
+
+    Value result = OBJ_VAL(makeString(buff, totalBytesRead, false));
+    FREE(char*, buff);
+    return result;
 }
 
 static Value sqrtNative(int argCount, Value *args) {
@@ -97,7 +84,7 @@ static Value getFieldNative(int argCount, Value *args) {
     Value value;
 
     if (!tableGet(&instance->fields, name, &value)) {
-        runtimeError("Undefined field '%.*s'.", name->length, AS_CSTRING(name));
+        runtimeError("Undefined field '%.*s'.", name->length, name->chars);
         return UNDEFINED_VAL;
     }
 
@@ -138,6 +125,21 @@ static Value deleteFieldNative(int argCount, Value *args) {
     return NIL_VAL;
 }
 
+static Value append(int argCount, Value *args) {
+    if (!IS_ARRAY(args[0])) {
+        runtimeError("First argument should be an array.");
+        return UNDEFINED_VAL;
+    }
+    ObjArray *array = AS_ARRAY(args[0]);
+    if (array->count + 1 > array->capacity) {
+        int newCapacity = GROW_CAPACITY(array->capacity);
+        array->values = GROW_ARRAY(Value, array->values, array->capacity, newCapacity);
+        array->capacity = newCapacity;
+    }
+
+    array->values[array->count++] = args[1];
+    return NIL_VAL;
+}
 
 static void resetStack() {
     vm.stackTop = &vm.stack[0];
@@ -161,7 +163,7 @@ static void runtimeError(const char *format, ...) {
         if (function->name == NULL) {
             fprintf(stderr, "script\n");
         } else {
-            fprintf(stderr, "%.*s()\n", function->name->length, AS_CSTRING(function->name));
+            fprintf(stderr, "%.*s()\n", function->name->length, function->name->chars);
         }
     }
     resetStack();
@@ -207,6 +209,7 @@ void initVM() {
     defineNative("getField", getFieldNative, 2);
     defineNative("setField", setFieldNative, 3);
     defineNative("deleteField", deleteFieldNative, 2);
+    defineNative("append", append, 2);
 }
 
 void freeVM() {
@@ -397,21 +400,27 @@ static bool isFalsey(Value value) {
 }
 
 static void concatenate() {
-    ObjString *objB = (ObjString *) AS_OBJ(peek(0));
-    ObjString *objA = (ObjString *) AS_OBJ(peek(1));
+    ObjString *objB = AS_STRING(peek(0));
+    ObjString *objA = AS_STRING(peek(1));
 
     int length = objA->length + objB->length;
-    ObjString *result = allocateString(length, false);
-    memcpy(result->chars, AS_CSTRING(objA), objA->length);
-    memcpy(result->chars + objA->length, AS_CSTRING(objB), objB->length);
-    result->chars[length] = '\0';
-    result->hash = hashString(result->chars, length);
+    char *chars = ALLOCATE(char, length + 1);
+    memcpy(chars, objA->chars, objA->length);
+    memcpy(chars + objA->length, objB->chars, objB->length);
+    chars[length] = '\0';
 
-    ObjString *interned = tableFindString(&vm.strings, result->chars, length, result->hash);
+    uint32_t hash = hashString(chars, length);
+    ObjString *interned = tableFindString(&vm.strings, chars, length, hash);
+    ObjString *result = NULL;
     if (interned != NULL) {
+        FREE(char, chars);
         result = interned;
     } else {
+        result = allocateString(length);
         push(OBJ_VAL(result));
+        result->chars = chars;
+        result->reference = false;
+        result->hash = hash;
         tableSet(&vm.strings, result, NIL_VAL);
         pop(1);
     }
@@ -448,6 +457,31 @@ static InterpretResult run() {
         type a = AS_NUMBER(pop(1));    \
         push(valueType(a op b));       \
     } while(false)
+#define VALIDATE_ARRAY_INDEX(rawIndex__, objArray) \
+    do {                                          \
+        Value rawIdx = rawIndex__;                 \
+        if (!IS_NUMBER(rawIdx)) {                 \
+            frame->ip = ip;                       \
+            runtimeError("array index should be a number."); \
+            return INTERPRET_RUNTIME_ERROR;       \
+        }                                         \
+        double index__ = AS_NUMBER(rawIdx);        \
+        if (index__ != trunc(index__)) {             \
+            frame->ip = ip;                       \
+            runtimeError("array index should be an integer."); \
+            return INTERPRET_RUNTIME_ERROR;       \
+        }                                         \
+        if (index__ < 0) {                         \
+            frame->ip = ip;                       \
+            runtimeError("array index should be positive."); \
+            return INTERPRET_RUNTIME_ERROR;       \
+        }                                         \
+        if (index__ >= (objArray)->count) {           \
+            frame->ip = ip;                       \
+            runtimeError("array index is out of bounds.");   \
+            return INTERPRET_RUNTIME_ERROR;       \
+        }                                         \
+    } while(false)                                \
 
     for (;;) {
 #ifdef DEBUG_TRACE_EXECUTION
@@ -490,7 +524,7 @@ static InterpretResult run() {
                 if (IS_UNDEFINED(globals[variableIndex])) {
                     frame->ip = ip;
                     ObjString *varName = AS_STRING(globals[variableIndex - 1]);
-                    runtimeError("Undefined variable '%.*s'.", varName->length, AS_CSTRING(varName));
+                    runtimeError("Undefined variable '%.*s'.", varName->length, varName->chars);
                     return INTERPRET_RUNTIME_ERROR;
                 }
 
@@ -505,7 +539,7 @@ static InterpretResult run() {
                 if (IS_UNDEFINED(globals[variableIndex])) {
                     frame->ip = ip;
                     ObjString *varName = AS_STRING(globals[variableIndex - 1]);
-                    runtimeError("Undefined variable '%.*s'.", varName->length, AS_CSTRING(varName));
+                    runtimeError("Undefined variable '%.*s'.", varName->length, varName->chars);
                     return INTERPRET_RUNTIME_ERROR;
                 }
 
@@ -556,7 +590,7 @@ static InterpretResult run() {
 
                 if (!bindMethod(instance->klass, name)) {
                     frame->ip = ip;
-                    runtimeError("Undefined property '%.*s'.", name->length, AS_CSTRING(name));
+                    runtimeError("Undefined property '%.*s'.", name->length, name->chars);
                     return INTERPRET_RUNTIME_ERROR;
                 }
                 break;
@@ -581,7 +615,7 @@ static InterpretResult run() {
 
                 if (!bindMethod(superclass, name)) {
                     frame->ip = ip;
-                    runtimeError("Undefined super property '%.*s'.", name->length, AS_CSTRING(name));
+                    runtimeError("Undefined super property '%.*s'.", name->length, name->chars);
                     return INTERPRET_RUNTIME_ERROR;
                 }
                 break;
@@ -738,10 +772,33 @@ static InterpretResult run() {
             case OP_METHOD:
                 if (!defineMethod(AS_STRING(READ_CONSTANT()))) {
                     frame->ip = ip;
-                    runtimeError("class initializer redeclared");
+                    runtimeError("class initializer redeclared.");
                     return INTERPRET_RUNTIME_ERROR;
                 }
                 break;
+            case OP_ARRAY: {
+                uint16_t elements = READ_SHORT();
+                Value array = OBJ_VAL(newArray(vm.stackTop - elements, elements));
+                pop(elements);
+                push(array);
+                break;
+            }
+            case OP_ARRAY_GET: {
+                Value index = pop(1);
+                ObjArray *objArray = AS_ARRAY(pop(1));
+                VALIDATE_ARRAY_INDEX(index, objArray);
+                push(objArray->values[(int) AS_NUMBER(index)]);
+                break;
+            }
+            case OP_ARRAY_SET: {
+                Value value = pop(1);
+                Value index = pop(1);
+                ObjArray *objArray = AS_ARRAY(pop(1));
+                VALIDATE_ARRAY_INDEX(index, objArray);
+                objArray->values[(int) AS_NUMBER(index)] = value;
+                push(value);
+                break;
+            }
         }
     }
 

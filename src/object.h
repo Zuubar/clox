@@ -15,9 +15,9 @@
 #define IS_CLASS(value)         (isObjType(value, OBJ_CLASS))
 #define IS_INSTANCE(value)      (isObjType(value, OBJ_INSTANCE))
 #define IS_BOUND_METHOD(value)  (isObjType(value, OBJ_BOUND_METHOD))
+#define IS_ARRAY(value)         (isObjType(value, OBJ_ARRAY))
 
 #define AS_STRING(value)        ((ObjString*)AS_OBJ(value))
-#define AS_CSTRING(objString)   (objString->referenced != NULL ? objString->referenced : objString->chars)
 #define AS_FUNCTION(value)      ((ObjFunction*)AS_OBJ(value))
 #define AS_NATIVE(value)        (((ObjNative*)AS_OBJ(value)))
 #define AS_CLOSURE(value)       (((ObjClosure*)AS_OBJ(value)))
@@ -25,7 +25,7 @@
 #define AS_CLASS(value)         (((ObjClass*)AS_OBJ(value)))
 #define AS_INSTANCE(value)      (((ObjInstance*)AS_OBJ(value)))
 #define AS_BOUND_METHOD(value)  (((ObjBoundMethod*)AS_OBJ(value)))
-#define FREE_STRING(objString)  (reallocate(objString, sizeof(ObjString) + ((objString)->referenced != NULL ? 0 : sizeof(char[(objString)->length + 1])), 0))
+#define AS_ARRAY(value)         (((ObjArray*)AS_OBJ(value)))
 
 
 typedef enum {
@@ -37,6 +37,7 @@ typedef enum {
     OBJ_CLASS,
     OBJ_INSTANCE,
     OBJ_BOUND_METHOD,
+    OBJ_ARRAY,
 } ObjType;
 
 struct Obj {
@@ -49,8 +50,8 @@ struct ObjString {
     Obj obj;
     int length;
     uint32_t hash;
-    const char *referenced;
-    char chars[];
+    char *chars;
+    bool reference;
 };
 
 typedef struct {
@@ -94,6 +95,13 @@ typedef struct {
     ObjClosure *method;
 } ObjBoundMethod;
 
+typedef struct {
+    Obj obj;
+    int capacity;
+    int count;
+    Value *values;
+} ObjArray;
+
 typedef Value (*NativeFn)(int argCount, Value *args);
 
 typedef struct {
@@ -104,9 +112,11 @@ typedef struct {
 
 uint32_t hashString(const char *key, int length);
 
-struct ObjString *allocateString(int length, bool referenced);
+struct ObjString *allocateString(int length);
 
 struct ObjString *makeString(const char *chars, int length, bool reference);
+
+Obj *allocateObject(size_t size, ObjType type);
 
 ObjFunction *newFunction();
 
@@ -121,6 +131,8 @@ ObjClass *newClass(ObjString *name);
 ObjInstance *newInstance(ObjClass *klass);
 
 ObjBoundMethod *newBoundMethod(Value receiver, ObjClosure *method);
+
+ObjArray *newArray(Value *start, uint16_t length);
 
 void printObject(Value value);
 

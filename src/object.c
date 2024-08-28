@@ -20,7 +20,7 @@ uint32_t hashString(const char *key, int length) {
     return hash;
 }
 
-static Obj *allocateObject(size_t size, ObjType type) {
+Obj *allocateObject(size_t size, ObjType type) {
     Obj *object = (Obj *) reallocate(NULL, 0, size);
     object->type = type;
     object->isMarked = false;
@@ -36,14 +36,12 @@ static Obj *allocateObject(size_t size, ObjType type) {
     return object;
 }
 
-ObjString *allocateString(int length, bool referenced) {
+ObjString *allocateString(int length) {
     size_t size = sizeof(ObjString);
-    if (!referenced) {
-        size = sizeof(ObjString) + sizeof(char[length + 1]);
-    }
     ObjString *string = (ObjString *) allocateObject(size, OBJ_STRING);
-    string->referenced = NULL;
     string->length = length;
+    string->chars = NULL;
+    string->reference = false;
     return string;
 }
 
@@ -54,16 +52,19 @@ ObjString *makeString(const char *chars, int length, bool reference) {
         return interned;
     }
 
-    ObjString *string = allocateString(length, reference);
+    ObjString *string = allocateString(length);
+    push(OBJ_VAL(string));
+    string->reference = reference;
+
     if (reference) {
-        string->referenced = chars;
+        string->chars = chars;
     } else {
+        string->chars = ALLOCATE(char, length + 1);
         memcpy(string->chars, chars, length);
         string->chars[length] = '\0';
     }
     string->hash = hash;
 
-    push(OBJ_VAL(string));
     tableSet(&vm.strings, string, NIL_VAL);
     pop(1);
     return string;
@@ -120,6 +121,29 @@ ObjBoundMethod *newBoundMethod(Value receiver, ObjClosure *method) {
     return bound;
 }
 
+ObjArray *newArray(Value *source, uint16_t length) {
+    int capacity = length;
+    if (length != 0) {
+        capacity -= 1;
+        for (int i = 1; i < 32; i *= 2) {
+            capacity |= capacity >> i;
+        }
+        capacity += 1;
+    }
+
+    ObjArray *arrayObj = ALLOCATE_OBJ(ObjArray, OBJ_ARRAY);
+    push(OBJ_VAL(arrayObj));
+    arrayObj->count = 0;
+    arrayObj->capacity = capacity;
+    arrayObj->values = GROW_ARRAY(Value, NULL, 0, arrayObj->capacity);
+    pop(1);
+
+    for (Value *val = source; val < source + length; val++) {
+        arrayObj->values[arrayObj->count++] = *val;
+    }
+    return arrayObj;
+}
+
 ObjUpvalue *newUpvalue(Value *value) {
     ObjUpvalue *upvalue = ALLOCATE_OBJ(ObjUpvalue, OBJ_UPVALUE);
     upvalue->location = value;
@@ -133,14 +157,14 @@ static void printFunction(ObjFunction *function) {
         printf("<script>");
         return;
     }
-    printf("<fn %.*s>", function->name->length, AS_CSTRING(function->name));
+    printf("<fn %.*s>", function->name->length, function->name->chars);
 }
 
 void printObject(Value value) {
     switch (OBJ_TYPE(value)) {
         case OBJ_STRING: {
             ObjString *strObj = AS_STRING(value);
-            printf("%.*s", strObj->length, AS_CSTRING(strObj));
+            printf("%.*s", strObj->length, strObj->chars);
             break;
         }
         case OBJ_FUNCTION: {
@@ -158,17 +182,29 @@ void printObject(Value value) {
             break;
         case OBJ_CLASS: {
             ObjString *className = AS_CLASS(value)->name;
-            printf("%.*s", className->length, AS_CSTRING(className));
+            printf("%.*s", className->length, className->chars);
             break;
         }
         case OBJ_INSTANCE: {
             ObjString *className = AS_INSTANCE(value)->klass->name;
-            printf("%.*s instance", className->length, AS_CSTRING(className));
+            printf("%.*s instance", className->length, className->chars);
             break;
         }
         case OBJ_BOUND_METHOD:
             printFunction(AS_BOUND_METHOD(value)->method->function);
             break;
+        case OBJ_ARRAY: {
+            ObjArray *array = AS_ARRAY(value);
+            printf("[");
+            for (int i = 0; i < array->count; i++) {
+                printValue(array->values[i]);
+                if (i + 1 != array->count) {
+                    printf(", ");
+                }
+            }
+            printf("]");
+            break;
+        }
         default:
             printf("Unknown object.");
             break;
