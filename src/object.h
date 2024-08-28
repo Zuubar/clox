@@ -18,7 +18,6 @@
 #define IS_ARRAY(value)         (isObjType(value, OBJ_ARRAY))
 
 #define AS_STRING(value)        ((ObjString*)AS_OBJ(value))
-#define AS_CSTRING(objString)   (objString->referenced != NULL ? objString->referenced : objString->chars)
 #define AS_FUNCTION(value)      ((ObjFunction*)AS_OBJ(value))
 #define AS_NATIVE(value)        (((ObjNative*)AS_OBJ(value)))
 #define AS_CLOSURE(value)       (((ObjClosure*)AS_OBJ(value)))
@@ -27,7 +26,6 @@
 #define AS_INSTANCE(value)      (((ObjInstance*)AS_OBJ(value)))
 #define AS_BOUND_METHOD(value)  (((ObjBoundMethod*)AS_OBJ(value)))
 #define AS_ARRAY(value)         (((ObjArray*)AS_OBJ(value)))
-#define FREE_STRING(objString)  (reallocate(objString, sizeof(ObjString) + ((objString)->referenced != NULL ? 0 : sizeof(char[(objString)->length + 1])), 0))
 
 
 typedef enum {
@@ -52,8 +50,8 @@ struct ObjString {
     Obj obj;
     int length;
     uint32_t hash;
-    const char *referenced;
-    char chars[];
+    char *chars;
+    bool reference;
 };
 
 typedef struct {
@@ -114,7 +112,7 @@ typedef struct {
 
 uint32_t hashString(const char *key, int length);
 
-struct ObjString *allocateString(int length, bool referenced);
+struct ObjString *allocateString(int length);
 
 struct ObjString *makeString(const char *chars, int length, bool reference);
 

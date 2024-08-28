@@ -84,7 +84,7 @@ static Value getFieldNative(int argCount, Value *args) {
     Value value;
 
     if (!tableGet(&instance->fields, name, &value)) {
-        runtimeError("Undefined field '%.*s'.", name->length, AS_CSTRING(name));
+        runtimeError("Undefined field '%.*s'.", name->length, name->chars);
         return UNDEFINED_VAL;
     }
 
@@ -163,7 +163,7 @@ static void runtimeError(const char *format, ...) {
         if (function->name == NULL) {
             fprintf(stderr, "script\n");
         } else {
-            fprintf(stderr, "%.*s()\n", function->name->length, AS_CSTRING(function->name));
+            fprintf(stderr, "%.*s()\n", function->name->length, function->name->chars);
         }
     }
     resetStack();
@@ -400,21 +400,27 @@ static bool isFalsey(Value value) {
 }
 
 static void concatenate() {
-    ObjString *objB = (ObjString *) AS_OBJ(peek(0));
-    ObjString *objA = (ObjString *) AS_OBJ(peek(1));
+    ObjString *objB = AS_STRING(peek(0));
+    ObjString *objA = AS_STRING(peek(1));
 
     int length = objA->length + objB->length;
-    ObjString *result = allocateString(length, false);
-    memcpy(result->chars, AS_CSTRING(objA), objA->length);
-    memcpy(result->chars + objA->length, AS_CSTRING(objB), objB->length);
-    result->chars[length] = '\0';
-    result->hash = hashString(result->chars, length);
+    char *chars = ALLOCATE(char, length + 1);
+    memcpy(chars, objA->chars, objA->length);
+    memcpy(chars + objA->length, objB->chars, objB->length);
+    chars[length] = '\0';
 
-    ObjString *interned = tableFindString(&vm.strings, result->chars, length, result->hash);
+    uint32_t hash = hashString(chars, length);
+    ObjString *interned = tableFindString(&vm.strings, chars, length, hash);
+    ObjString *result = NULL;
     if (interned != NULL) {
+        FREE(char, chars);
         result = interned;
     } else {
+        result = allocateString(length);
         push(OBJ_VAL(result));
+        result->chars = chars;
+        result->reference = false;
+        result->hash = hash;
         tableSet(&vm.strings, result, NIL_VAL);
         pop(1);
     }
@@ -518,7 +524,7 @@ static InterpretResult run() {
                 if (IS_UNDEFINED(globals[variableIndex])) {
                     frame->ip = ip;
                     ObjString *varName = AS_STRING(globals[variableIndex - 1]);
-                    runtimeError("Undefined variable '%.*s'.", varName->length, AS_CSTRING(varName));
+                    runtimeError("Undefined variable '%.*s'.", varName->length, varName->chars);
                     return INTERPRET_RUNTIME_ERROR;
                 }
 
@@ -533,7 +539,7 @@ static InterpretResult run() {
                 if (IS_UNDEFINED(globals[variableIndex])) {
                     frame->ip = ip;
                     ObjString *varName = AS_STRING(globals[variableIndex - 1]);
-                    runtimeError("Undefined variable '%.*s'.", varName->length, AS_CSTRING(varName));
+                    runtimeError("Undefined variable '%.*s'.", varName->length, varName->chars);
                     return INTERPRET_RUNTIME_ERROR;
                 }
 
@@ -584,7 +590,7 @@ static InterpretResult run() {
 
                 if (!bindMethod(instance->klass, name)) {
                     frame->ip = ip;
-                    runtimeError("Undefined property '%.*s'.", name->length, AS_CSTRING(name));
+                    runtimeError("Undefined property '%.*s'.", name->length, name->chars);
                     return INTERPRET_RUNTIME_ERROR;
                 }
                 break;
@@ -609,7 +615,7 @@ static InterpretResult run() {
 
                 if (!bindMethod(superclass, name)) {
                     frame->ip = ip;
-                    runtimeError("Undefined super property '%.*s'.", name->length, AS_CSTRING(name));
+                    runtimeError("Undefined super property '%.*s'.", name->length, name->chars);
                     return INTERPRET_RUNTIME_ERROR;
                 }
                 break;

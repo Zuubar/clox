@@ -19,19 +19,18 @@
 void *reallocate(void *pointer, size_t oldSize, size_t newSize) {
     vm.bytesAllocated += newSize - oldSize;
 
-    if (newSize == 0) {
-        free(pointer);
-        return NULL;
-    }
-
     if (newSize > oldSize) {
 #ifdef DEBUG_STRESS_GC
         collectGarbage();
 #endif
+        if (vm.bytesAllocated > vm.nextGC) {
+            collectGarbage();
+        }
     }
 
-    if (vm.bytesAllocated > vm.nextGC) {
-        collectGarbage();
+    if (newSize == 0) {
+        free(pointer);
+        return NULL;
     }
 
     void *result = realloc(pointer, newSize);
@@ -46,7 +45,11 @@ static void freeObject(Obj *object) {
 
     switch (object->type) {
         case OBJ_STRING: {
-            FREE_STRING((ObjString *) object);
+            ObjString *str = (ObjString *) object;
+            if (!str->reference) {
+                FREE_ARRAY(char, str->chars, str->length + 1);
+            }
+            FREE(ObjString, object);
             break;
         }
         case OBJ_FUNCTION: {
@@ -103,7 +106,7 @@ void markObject(Obj *object) {
     object->isMarked = true;
 
     if (object->type == OBJ_ARRAY) {
-        ObjArray *objArray = (ObjArray*)object;
+        ObjArray *objArray = (ObjArray *) object;
         for (int i = 0; i < objArray->count; i++) {
             markValue(objArray->values[i]);
         }

@@ -8,7 +8,7 @@ void disassembleChunk(Chunk *chunk, ObjString *name) {
     if (name == NULL) {
         printf("== <script> ==\n");
     } else {
-        printf("== %.*s ==\n", name->length, AS_CSTRING(name));
+        printf("== %.*s ==\n", name->length, name->chars);
     }
 
 
