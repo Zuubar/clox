@@ -1,2 +1,2 @@
-# Ignore Unity C Testing Framework files
-unity/** linguist-vendored
+# Ignore vendor
+vendor/** linguist-vendored
